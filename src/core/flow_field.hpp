@@ -11,7 +11,7 @@
 // Domain: sector flows are defined only inside their wedge, so the admissible domain is the
 // intersection of all sector wedges. Outside it (inDomain() false) the field is undefined and must
 // be masked. Other elements are superposed unrestricted and do not keep the sector walls as
-// streamlines. Wall images (image_system.hpp) are not included yet.
+// streamlines. Wall images are added as ordinary elements by buildFlowModel() (scene.hpp).
 #pragma once
 
 #include "core/flow_element.hpp"
@@ -32,5 +32,9 @@ struct FlowField {
     bool inDomain(Vec2 p) const;
     bool nearSingularity(Vec2 p, double radius) const;
 };
+
+// Median speed over a grid of points in `region` (skipping points outside the domain or close to a
+// singularity): a scale for colour maps, animation speed and stagnation thresholds. 0 if no flow.
+double typicalSpeed(const FlowField& field, const Rect& region, int gridSize = 24);
 
 } // namespace pfl

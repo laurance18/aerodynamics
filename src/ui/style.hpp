@@ -1,0 +1,38 @@
+// style.hpp: colours and small vector glyphs shared by the toolbar icons and the plot markers.
+// Glyphs are drawn with ImDrawList in screen pixels, so no image assets are needed.
+#pragma once
+
+#include "core/scene.hpp"
+
+#include <imgui.h>
+
+namespace pfl {
+
+inline constexpr ImU32 k_sourceColor = IM_COL32(95, 205, 120, 255);
+inline constexpr ImU32 k_sinkColor = IM_COL32(235, 95, 85, 255);
+inline constexpr ImU32 k_vortexColor = IM_COL32(245, 185, 65, 255);
+inline constexpr ImU32 k_doubletColor = IM_COL32(195, 140, 245, 255);
+inline constexpr ImU32 k_sectorColor = IM_COL32(90, 205, 225, 255);
+inline constexpr ImU32 k_wallColor = IM_COL32(235, 235, 235, 255);
+inline constexpr ImU32 k_uniformColor = IM_COL32(235, 235, 235, 255);
+
+// DPI scale of the UI (1 at 96 dpi).
+inline float uiScale() { return ImGui::GetStyle().FontScaleDpi; }
+
+// `colour` with its alpha multiplied by `alpha`.
+ImU32 fadeColor(ImU32 colour, float alpha);
+
+// Filled arrow head with its tip at `tip`, pointing along the unit vector `dir`.
+void drawArrowHead(ImDrawList* dl, ImVec2 tip, ImVec2 dir, float size, ImU32 colour);
+
+// Circular arrow around `centre`; clockwise on screen when `clockwise` (a vortex with Gamma > 0).
+void drawVortexGlyph(ImDrawList* dl, ImVec2 centre, float radius, bool clockwise, ImU32 colour);
+
+// Two circles tangent to the doublet axis `axis` (unit screen vector, beta = 0 points right) and an
+// arrow along -axis, the direction of Anderson's doublet arrow (sink to source).
+void drawDoubletGlyph(ImDrawList* dl, ImVec2 centre, float radius, ImVec2 axis, ImU32 colour);
+
+// Toolbar icon for an element type, fitted in a square of side `size` centred on `centre`.
+void drawToolIcon(ImDrawList* dl, ImVec2 centre, float size, ElementKind kind);
+
+} // namespace pfl

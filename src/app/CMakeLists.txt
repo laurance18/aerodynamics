@@ -7,7 +7,7 @@ add_executable(PotentialFlowLab
     app.hpp app.cpp
     platform_win32.hpp platform_win32.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
-target_link_libraries(PotentialFlowLab PRIVATE pfl_core pfl_render pfl_ui pfl_io pfl_imgui glfw)
+target_link_libraries(PotentialFlowLab PRIVATE pfl_core pfl_render pfl_ui pfl_io pfl_imgui glfw comdlg32)
 pfl_set_warnings(PotentialFlowLab)
 
 # Release: GUI subsystem (no console window). Debug keeps the console for logs.

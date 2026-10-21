@@ -1,15 +1,21 @@
 #include "app/app.hpp"
 
 #include "app/platform_win32.hpp"
-#include "core/dummy_flow.hpp"
 #include "core/particles.hpp"
+#include "core/scene.hpp"
+#include "core/streamline.hpp"
+#include "io/scene_io.hpp"
 #include "render/gl.hpp"
 #include "render/gl_debug.hpp"
 #include "render/particle_renderer.hpp"
 #include "render/shader_sources.hpp"
 #include "render/trail_renderer.hpp"
-#include "ui/demo_panel.hpp"
 #include "ui/main_menu.hpp"
+#include "ui/parameter_dialog.hpp"
+#include "ui/plot_view.hpp"
+#include "ui/status_bar.hpp"
+#include "ui/style.hpp"
+#include "ui/toolbar.hpp"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -18,19 +24,31 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
 
 namespace pfl {
 namespace {
 
-constexpr const char* k_windowTitle = "Potential Flow Lab — demo";
-constexpr int k_windowWidth = 1280;
-constexpr int k_windowHeight = 800;
-constexpr std::size_t k_particleCount = 10'000;
-constexpr double k_viewHalfHeight = 1.25; // world units visible above/below the origin
+constexpr const char* k_appName = "Potential Flow Lab";
+constexpr int k_windowWidth = 1400;
+constexpr int k_windowHeight = 860;
 constexpr double k_maxFrameDt = 1.0 / 20.0;
+constexpr float k_fontSize = 17.0f;
+
+// Streamlines: traced a little beyond the view so panning shows lines at the edges.
+constexpr double k_streamlineMargin = 0.05;
+constexpr double k_singularRadiusPx = 3.0; // lines stop this many pixels from a singular point
+
+// Tracer particles.
+constexpr std::size_t k_particleCount = 4'000;
+constexpr double k_crossingSeconds = 6.0;  // at the typical speed a particle crosses the view this fast
+constexpr double k_particleLifetime = 6.0; // seconds before a particle respawns
+constexpr float k_trailFade = 0.08f;       // fraction of the trail removed per frame
+constexpr float k_pointSize = 2.0f;        // pixels
 
 constexpr const char* k_glRequiredTitle = "Potential Flow Lab - OpenGL 3.3 required";
 constexpr const char* k_glRequiredText =
@@ -43,6 +61,21 @@ constexpr const char* k_glRequiredText =
 void onGlfwError(int code, const char* description) {
     logMessage("GLFW error " + std::to_string(code) + ": " + description);
 }
+
+// The particle layer holds premultiplied colour; ImGui's default blending would darken it.
+void premultipliedBlend(const ImDrawList*, const ImDrawCmd*) {
+    glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+// Where new elements are placed: the view centre, rounded so the dialog shows tidy numbers.
+Vec2 newElementPosition(const Rect& view) {
+    const Vec2 c = view.center();
+    const double step = std::pow(10.0, std::floor(std::log10(std::max(view.size().y, 1e-12))) - 1.0);
+    return {std::round(c.x / step) * step + 0.0, std::round(c.y / step) * step + 0.0};
+}
+
+// Actions that throw away the current scene, so they may need confirmation first.
+enum class DiscardingAction { None, New, Open, Quit };
 
 class App {
 public:
@@ -62,6 +95,24 @@ private:
     void frame(double dt);
     void shutdown();
 
+    // Scene management.
+    void handleMenu(const MainMenuActions& actions);
+    void request(DiscardingAction action);
+    void perform(DiscardingAction action);
+    void openScene();
+    void saveScene(bool askForPath);
+    void setScene(Scene scene, std::filesystem::path path);
+    void sceneEdited();
+    void rebuildModel();
+    void updateTitle();
+    void onCloseRequested();
+
+    // Per-frame work after the UI.
+    void updateStreamlines();
+    void renderParticles(double dt);
+    bool particlesVisible() const;
+    StatusInfo statusInfo() const;
+
     bool m_glfwReady = false;
     bool m_imguiReady = false;
     GLFWwindow* m_window = nullptr;
@@ -70,10 +121,32 @@ private:
     std::unique_ptr<ParticleRenderer> m_particleRenderer;
     std::unique_ptr<TrailRenderer> m_trailRenderer;
 
+    // The scene and what is derived from it.
+    Scene m_scene;
+    FlowModel m_model;
+    std::vector<std::string> m_warnings;
+    std::filesystem::path m_path;
+    bool m_dirty = false;
+    std::string m_title;
+
+    // UI state.
+    PlotView m_plotView;
+    ParameterDialog m_dialog;
+    PlotViewResult m_plot; // plot geometry from the latest frame
+    DiscardingAction m_pendingAction = DiscardingAction::None;
+    bool m_confirmDiscard = false;
+    bool m_quitConfirmed = false;
+
+    // Streamlines, recomputed when the flow, the view or the plot settings change.
+    StreamlineSet m_streamlines;
+    std::optional<Rect> m_streamlineView;
+    bool m_streamlinesDirty = true;
+
+    // Tracer particles.
     ParticleSystem m_particles{k_particleCount};
-    DemoSettings m_settings;
-    DemoPanel m_panel;
-    bool m_trailsWereOn = true;
+    double m_referenceSpeed = 0.0;
+    std::optional<Rect> m_particleView;
+    bool m_respawnParticles = true;
 };
 
 bool App::init() {
@@ -86,6 +159,16 @@ bool App::init() {
 
     if (!createWindow() || !initGraphics()) return false;
     initImGui();
+    setScene(Scene{}, {});
+
+    if (const std::optional<std::filesystem::path> path = commandLineFile()) {
+        SceneLoadResult result = loadSceneFile(*path);
+        if (result.scene) {
+            setScene(std::move(*result.scene), *path);
+        } else {
+            showErrorMessage(m_window, "Could not open scene", result.error);
+        }
+    }
     return true;
 }
 
@@ -110,16 +193,17 @@ bool App::createWindow() {
     // Fit the default size on small screens.
     int width = k_windowWidth;
     int height = k_windowHeight;
+    int workX = 0, workY = 0, workW = 0, workH = 0;
     if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
-        int x = 0, y = 0, workW = 0, workH = 0;
-        glfwGetMonitorWorkarea(monitor, &x, &y, &workW, &workH);
+        glfwGetMonitorWorkarea(monitor, &workX, &workY, &workW, &workH);
         if (workW > 0 && workH > 0) {
             width = std::min(width, workW * 9 / 10);
             height = std::min(height, workH * 9 / 10);
         }
     }
 
-    m_window = glfwCreateWindow(width, height, k_windowTitle, nullptr, nullptr);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // shown once centred
+    m_window = glfwCreateWindow(width, height, k_appName, nullptr, nullptr);
     if (m_window == nullptr) {
         const char* reason = nullptr;
         glfwGetError(&reason);
@@ -128,8 +212,20 @@ bool App::createWindow() {
         showFatalError(k_glRequiredTitle, details);
         return false;
     }
+    if (workW > 0 && workH > 0) {
+        // Centre the whole window, title bar included, in the work area (above the taskbar).
+        int left = 0, top = 0, right = 0, bottom = 0;
+        glfwGetWindowFrameSize(m_window, &left, &top, &right, &bottom);
+        glfwSetWindowPos(m_window, workX + (workW - width - left - right) / 2 + left,
+                         workY + std::max((workH - height - top - bottom) / 2, 0) + top);
+    }
+    glfwShowWindow(m_window);
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1); // VSync
+    glfwSetWindowUserPointer(m_window, this);
+    glfwSetWindowCloseCallback(m_window, [](GLFWwindow* window) {
+        static_cast<App*>(glfwGetWindowUserPointer(window))->onCloseRequested();
+    });
     return true;
 }
 
@@ -162,11 +258,25 @@ void App::initImGui() {
     io.IniFilename = nullptr; // write nothing next to the exe
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
 
+    // Segoe UI ships with every Windows 10/11 and has the Greek letters and symbols the labels use
+    // (Λ, Γ, μ, θ, °, ...). Without it ImGui's built-in font shows them as '?'.
+    const char* windows = std::getenv("WINDIR");
+    const std::filesystem::path font = std::filesystem::path(windows != nullptr ? windows : "C:\\Windows") / "Fonts" / "segoeui.ttf";
+    std::error_code ec;
+    if (std::filesystem::exists(font, ec)) {
+        io.Fonts->AddFontFromFileTTF(font.string().c_str(), k_fontSize);
+    } else {
+        logMessage("Segoe UI not found; using ImGui's default font (Greek letters will not display).");
+    }
+
     ImGui::StyleColorsDark();
     const float scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor());
     ImGuiStyle& style = ImGui::GetStyle();
     style.ScaleAllSizes(scale);
     style.FontScaleDpi = scale;
+
+    // Double-click on the plot edits elements, so ImPlot's "fit on double-click" moves to the middle button.
+    ImPlot::GetInputMap().Fit = ImGuiMouseButton_Middle;
 
     ImGui_ImplGlfw_InitForOpenGL(m_window, true);
     ImGui_ImplOpenGL3_Init("#version 330 core");
@@ -206,47 +316,275 @@ void App::frame(double dt) {
     glfwGetFramebufferSize(m_window, &fbWidth, &fbHeight);
     if (fbWidth <= 0 || fbHeight <= 0) return;
 
+    // Size the particle layer to the plot before the UI records draw commands that use its texture
+    // (resizing recreates the texture). The plot size is last frame's; a change shows a frame later.
+    const ImVec2 fbScale = ImGui::GetIO().DisplayFramebufferScale;
+    const int layerWidth = static_cast<int>(m_plot.pixelSize.x * fbScale.x);
+    const int layerHeight = static_cast<int>(m_plot.pixelSize.y * fbScale.y);
+    if (particlesVisible() && layerWidth > 0 && layerHeight > 0) m_trailRenderer->resize(layerWidth, layerHeight);
+
     // --- UI -------------------------------------------------------------------------------
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    const MainMenuActions actions = drawMainMenu(shaderHotReloadAvailable());
-    if (actions.quit) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
-    if (actions.reloadShaders) reloadShaders();
-    m_panel.draw(m_settings, m_particles.particles().size());
+    const MainMenuActions actions = drawMainMenu(m_scene, m_scene.plot, shaderHotReloadAvailable());
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const ImVec2 workPos = viewport->WorkPos;
+    const ImVec2 workSize = viewport->WorkSize;
+    const float statusHeight = statusBarHeight();
+    const float toolWidth = toolbarWidth();
+    const float bodyHeight = std::max(workSize.y - statusHeight, 1.0f);
+
+    if (const std::optional<ElementKind> kind = drawToolbar(workPos, ImVec2(toolWidth, bodyHeight))) {
+        m_dialog.openNew(defaultElement(*kind, newElementPosition(m_scene.plot.view)));
+    }
+
+    ParticleLayer layer;
+    if (particlesVisible() && m_trailRenderer->texture() != 0) {
+        layer.texture = static_cast<ImTextureID>(m_trailRenderer->texture());
+        layer.beginBlend = premultipliedBlend;
+    }
+    m_plot = m_plotView.draw(ImVec2(workPos.x + toolWidth, workPos.y), ImVec2(workSize.x - toolWidth, bodyHeight),
+                             m_scene, m_model, m_streamlines, layer);
+    m_scene.plot.view = m_plot.limits; // panning and zooming are saved with the scene, but are not "edits"
+    if (m_plot.editRequest) m_dialog.openEdit(*m_plot.editRequest, m_scene.elements[*m_plot.editRequest]);
+
+    handleMenu(actions);
+
+    if (const std::optional<ElementEdit> edit = m_dialog.draw(m_scene)) {
+        m_scene = applyEdit(std::move(m_scene), *edit);
+        sceneEdited();
+    }
+
+    if (m_confirmDiscard) {
+        openDiscardChangesDialog();
+        m_confirmDiscard = false;
+    }
+    if (const std::optional<bool> discard = drawDiscardChangesDialog()) {
+        if (*discard) perform(m_pendingAction);
+        m_pendingAction = DiscardingAction::None;
+    }
+
+    drawStatusBar(ImVec2(workPos.x, workPos.y + bodyHeight), ImVec2(workSize.x, statusHeight), statusInfo());
     ImGui::Render();
 
-    // --- Simulation -----------------------------------------------------------------------
-    const double aspect = static_cast<double>(fbWidth) / fbHeight;
-    const Vec2 halfExtent{k_viewHalfHeight * aspect, k_viewHalfHeight};
-    m_particles.setDomain({-halfExtent * 1.05, halfExtent * 1.05}); // respawn just off-screen
-    const DemoFlowParams flow = m_settings.flow;
-    m_particles.step(dt, [&flow](Vec2 p) { return demoVelocity(p, flow); });
+    // --- Flow -----------------------------------------------------------------------------
+    updateStreamlines();
+    renderParticles(dt);
 
-    // --- Rendering ------------------------------------------------------------------------
-    m_particleRenderer->upload(m_particles.particles());
-    ParticleView view;
-    view.halfExtent = halfExtent;
-    view.speedScale = static_cast<float>(1.0 / std::max(demoMaxSpeed(flow), 1e-6));
-    view.pointSize = m_settings.pointSize * ImGui::GetStyle().FontScaleDpi;
-
+    // --- Screen ---------------------------------------------------------------------------
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, fbWidth, fbHeight);
     glClearColor(0.05f, 0.06f, 0.09f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-
-    if (m_settings.trails) {
-        if (!m_trailsWereOn) m_trailRenderer->clear();
-        m_trailRenderer->begin(fbWidth, fbHeight, m_settings.trailFade);
-        m_particleRenderer->draw(view);
-        m_trailRenderer->composite(fbWidth, fbHeight);
-    } else {
-        m_particleRenderer->draw(view);
-    }
-    m_trailsWereOn = m_settings.trails;
-
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void App::handleMenu(const MainMenuActions& actions) {
+    if (actions.quit) request(DiscardingAction::Quit);
+    if (actions.newScene) request(DiscardingAction::New);
+    if (actions.open) request(DiscardingAction::Open);
+    if (actions.save || actions.saveAs) saveScene(actions.saveAs);
+    if (actions.reloadShaders) reloadShaders();
+    if (actions.resetView) m_plotView.setView(PlotSettings{}.view);
+    if (actions.plotChanged) {
+        m_dirty = true;
+        m_streamlinesDirty = true;
+        updateTitle();
+    }
+
+    const ElementsMenuAction& elements = actions.elements;
+    if (elements.edit) m_dialog.openEdit(*elements.edit, m_scene.elements[*elements.edit]);
+    if (elements.remove) {
+        m_scene.elements.erase(m_scene.elements.begin() + static_cast<std::ptrdiff_t>(*elements.remove));
+        sceneEdited();
+    }
+    if ((actions.clearAll || elements.removeAll) && !m_scene.elements.empty()) {
+        m_scene.elements.clear();
+        sceneEdited();
+    }
+}
+
+void App::request(DiscardingAction action) {
+    if (m_dirty) {
+        m_pendingAction = action;
+        m_confirmDiscard = true;
+    } else {
+        perform(action);
+    }
+}
+
+void App::perform(DiscardingAction action) {
+    switch (action) {
+    case DiscardingAction::New: setScene(Scene{}, {}); break;
+    case DiscardingAction::Open: openScene(); break;
+    case DiscardingAction::Quit:
+        m_quitConfirmed = true;
+        glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+        break;
+    case DiscardingAction::None: break;
+    }
+}
+
+void App::openScene() {
+    const std::optional<std::filesystem::path> path = showOpenSceneDialog(m_window);
+    if (!path) return;
+    SceneLoadResult result = loadSceneFile(*path);
+    if (!result.scene) {
+        showErrorMessage(m_window, "Could not open scene", result.error);
+        return;
+    }
+    setScene(std::move(*result.scene), *path);
+}
+
+void App::saveScene(bool askForPath) {
+    std::filesystem::path path = m_path;
+    if (askForPath || path.empty()) {
+        const std::optional<std::filesystem::path> chosen =
+            showSaveSceneDialog(m_window, path.empty() ? std::filesystem::path("scene.json") : path);
+        if (!chosen) return;
+        path = *chosen;
+    }
+    std::string error;
+    if (!saveSceneFile(m_scene, path, error)) {
+        showErrorMessage(m_window, "Could not save scene", error);
+        return;
+    }
+    m_path = path;
+    m_dirty = false;
+    updateTitle();
+}
+
+void App::setScene(Scene scene, std::filesystem::path path) {
+    m_scene = std::move(scene);
+    m_path = std::move(path);
+    m_dirty = false;
+    m_plotView.setView(m_scene.plot.view);
+    rebuildModel();
+    updateTitle();
+}
+
+void App::sceneEdited() {
+    m_dirty = true;
+    rebuildModel();
+    updateTitle();
+}
+
+void App::rebuildModel() {
+    m_model = buildFlowModel(m_scene);
+    m_warnings = sceneWarnings(m_scene, m_model);
+    m_streamlinesDirty = true;
+    m_respawnParticles = true;
+    m_trailRenderer->clear();
+}
+
+void App::updateTitle() {
+    const std::string name = m_path.empty() ? std::string("Untitled") : m_path.filename().string();
+    const std::string title = name + (m_dirty ? "*" : "") + " - " + k_appName;
+    if (title != m_title) {
+        m_title = title;
+        glfwSetWindowTitle(m_window, m_title.c_str());
+    }
+}
+
+void App::onCloseRequested() {
+    if (m_quitConfirmed || !m_dirty) return;
+    glfwSetWindowShouldClose(m_window, GLFW_FALSE);
+    request(DiscardingAction::Quit);
+}
+
+void App::updateStreamlines() {
+    const Rect view = m_plot.limits;
+    if (m_plot.pixelSize.x <= 0.0f || m_plot.pixelSize.y <= 0.0f) return;
+    if (!m_streamlinesDirty && m_streamlineView == view) return;
+
+    if (m_model.field.elements.empty()) {
+        m_streamlines = {};
+    } else {
+        const double worldPerPixel = view.size().x / m_plot.pixelSize.x;
+        StreamlineSettings settings;
+        settings.bounds = view.expanded(k_streamlineMargin);
+        settings.separation = view.size().y / std::max(m_scene.plot.streamlineDensity, 1);
+        settings.singularRadius = k_singularRadiusPx * worldPerPixel;
+        settings.arrowSpacing = m_scene.plot.arrowSpacingPx * uiScale() * worldPerPixel;
+        m_streamlines = computeStreamlines(m_model.field, settings);
+    }
+    m_referenceSpeed = typicalSpeed(m_model.field, view);
+    m_streamlineView = view;
+    m_streamlinesDirty = false;
+}
+
+bool App::particlesVisible() const { return m_scene.plot.showParticles && !m_model.field.elements.empty(); }
+
+void App::renderParticles(double dt) {
+    if (!particlesVisible() || m_trailRenderer->width() == 0) return;
+    const Rect view = m_plot.limits;
+    if (m_particleView != view) {
+        m_particleView = view;
+        m_trailRenderer->clear(); // old trails would be in the wrong place
+    }
+
+    // Time runs so that a particle at the typical speed crosses the view in k_crossingSeconds.
+    const double timeScale = m_referenceSpeed > 0.0 ? view.size().x / (k_crossingSeconds * m_referenceSpeed) : 0.0;
+    ParticleSettings& settings = m_particles.settings();
+    settings.bounds = view;
+    settings.maxStepLength = view.size().x / 300.0;
+    settings.maxAge = k_particleLifetime * timeScale;
+
+    const FlowField& field = m_model.field;
+    const double guard = view.size().x / 150.0;
+    const auto valid = [&field, guard](Vec2 p) { return field.inDomain(p) && !field.nearSingularity(p, guard); };
+    if (m_respawnParticles) {
+        m_particles.respawnAll(valid);
+        m_respawnParticles = false;
+    }
+    if (timeScale > 0.0) {
+        m_particles.step(dt * timeScale, [&field](Vec2 p) { return field.velocity(p); }, valid);
+    }
+
+    m_particleRenderer->upload(m_particles.particles());
+    ParticleView particleView;
+    particleView.center = view.center();
+    particleView.halfExtent = view.size() * 0.5;
+    particleView.speedScale = static_cast<float>(1.0 / std::max(2.0 * m_referenceSpeed, 1e-12));
+    particleView.pointSize = k_pointSize * uiScale();
+
+    m_trailRenderer->begin(m_scene.plot.particleTrails ? k_trailFade : 1.0f);
+    m_particleRenderer->draw(particleView);
+    m_trailRenderer->end();
+}
+
+StatusInfo App::statusInfo() const {
+    StatusInfo info;
+    info.streamlineCount = m_streamlines.lines.size();
+    info.warnings = m_warnings;
+
+    const FlowField& field = m_model.field;
+    if (m_plot.mouse) {
+        ProbeInfo probe;
+        probe.position = *m_plot.mouse;
+        probe.inDomain = field.inDomain(probe.position);
+        if (probe.inDomain) {
+            probe.velocity = field.velocity(probe.position);
+            if (m_model.freeStreamSpeed > 0.0) {
+                // Bernoulli with the free stream as reference: Cp = 1 - |V|^2 / U^2.
+                const double ratio = length(probe.velocity) / m_model.freeStreamSpeed;
+                probe.pressureCoefficient = 1.0 - ratio * ratio;
+            }
+        }
+        info.probe = probe;
+    }
+
+    for (std::size_t i = 0; i < m_scene.elements.size(); ++i) {
+        const auto* wall = std::get_if<SymmetryWall>(&m_scene.elements[i]);
+        if (wall == nullptr) continue;
+        const WallCheck check = checkWall(field, *wall, m_plot.limits);
+        if (check.samples == 0 || check.maxSpeed <= 0.0) continue;
+        info.walls.push_back({i + 1, check.maxNormalSpeed / check.maxSpeed, check.samples});
+    }
+    return info;
 }
 
 void App::shutdown() {

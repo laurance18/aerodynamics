@@ -119,7 +119,7 @@ std::optional<std::string> validationError(const FlowElement& element) {
                     return notFinite;
                 }
                 if (e.opening() <= 0.0 || e.opening() > k_twoPi + k_angleTolerance) {
-                    return "Wall angles must satisfy 0 < theta2 - theta1 <= 360 degrees.";
+                    return "Wall angles must satisfy 0 < θ₂ − θ₁ ≤ 360°.";
                 }
                 return std::nullopt;
             },
