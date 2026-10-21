@@ -1,0 +1,29 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "msvc",
+      "displayName": "MSVC x64 (Visual Studio 2022)",
+      "description": "Multi-config Visual Studio generator; use the debug/release build presets.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "binaryDir": "${sourceDir}/build/msvc",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug",   "displayName": "Debug",   "configurePreset": "msvc", "configuration": "Debug" },
+    { "name": "release", "displayName": "Release", "configurePreset": "msvc", "configuration": "Release" }
+  ],
+  "testPresets": [
+    {
+      "name": "debug", "displayName": "Debug", "configurePreset": "msvc", "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "release", "displayName": "Release", "configurePreset": "msvc", "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

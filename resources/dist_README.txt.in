@@ -1,0 +1,21 @@
+Potential Flow Lab @PROJECT_VERSION@
+===================================
+
+Interactive 2D potential-flow simulator (ME semester project).
+
+HOW TO RUN
+  Double-click PotentialFlowLab.exe. Nothing needs to be installed.
+
+REQUIREMENTS
+  - Windows 10 or 11, 64-bit.
+  - A graphics driver that supports OpenGL 3.3 (any GPU from roughly 2010 onward
+    with up-to-date drivers). Virtual machines and Remote Desktop sessions often
+    do not provide OpenGL 3.3; run the program directly on the computer instead.
+
+IF WINDOWS SHOWS "Windows protected your PC"
+  The program is not code-signed. Click "More info", then "Run anyway".
+
+CONTROLS (demo build)
+  - File > Quit exits the program.
+  - The left panel shows the frame rate and the particle settings.
+  - "Vortex strength..." opens a dialog: move the slider, then Apply or Cancel.

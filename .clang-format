@@ -1,0 +1,23 @@
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: All
+BreakBeforeTernaryOperators: true
+DerivePointerAlignment: false
+PointerAlignment: Left
+FixNamespaceComments: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'          # project headers
+    Priority: 1
+  - Regex: '^<(glad|GLFW|imgui|implot|nlohmann|doctest)'
+    Priority: 2
+  - Regex: '^<'          # standard / system headers
+    Priority: 3
+NamespaceIndentation: None
+SortIncludes: CaseSensitive
+...

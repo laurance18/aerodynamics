@@ -1,41 +1,30 @@
-# Created by https://www.toptal.com/developers/gitignore/api/c++
-# Edit at https://www.toptal.com/developers/gitignore?templates=c++
+# Build output
+/build/
+/out/
+/dist/
 
-## VSCode
-.vscode
+# Visual Studio / VS Code
+.vs/
+*.user
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
 
-### C++ ###
-# Prerequisites
-*.d
+# ImGui layout file (the app disables it, but just in case)
+imgui.ini
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
+# Compiled artefacts that might end up outside build/
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
+*.o
+*.pdb
+*.ilk
 *.lib
-
-# Executables
+*.a
+*.dll
 *.exe
-*.out
-*.app
+*.zip
 
-# End of https://www.toptal.com/developers/gitignore/api/c++
+# Python
+__pycache__/
