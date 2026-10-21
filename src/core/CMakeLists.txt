@@ -3,8 +3,8 @@ add_library(pfl_core STATIC
     vec2.hpp
     dummy_flow.hpp dummy_flow.cpp
     particles.hpp particles.cpp
-    flow_element.hpp
-    flow_field.hpp
+    flow_element.hpp flow_element.cpp
+    flow_field.hpp flow_field.cpp
     streamline.hpp
     image_system.hpp)
 target_include_directories(pfl_core PUBLIC "${PROJECT_SOURCE_DIR}/src")
