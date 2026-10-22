@@ -10,6 +10,8 @@ equipotential lines and velocity-magnitude contours, and animates tracer particl
 - Main plot: labelled (x, y) axes, scroll to zoom, drag to pan; streamlines are recomputed after
   every add, edit or delete. Hover an element to name it, double-click it to edit it.
 - **Elements** menu: every element with its parameters, each with Edit and Delete.
+- **Examples** menu: the scenes in `examples/` (cylinder, lifting cylinder, Rankine bodies, corner
+  flow, ...) built into the exe; one click loads the elements, view and plot settings.
 - **File** menu: New, Open, Save, Save As (JSON scenes, see `examples/`), Clear All, and exports:
   PNG image of the plot, CSV field data (u, v, |V|, φ, ψ, Cp on a grid), CSV streamline and
   equipotential polylines, CSV surface Cp of the bodies. The exports also run from the command line.
@@ -107,8 +109,8 @@ As a final check, copy the exe alone into an empty folder on another PC and doub
 - **Static runtime:** `CMAKE_MSVC_RUNTIME_LIBRARY = MultiThreaded$<$<CONFIG:Debug>:Debug>` (`/MT`,
   `/MTd`). It is set before any dependency is fetched, so they all use it.
 - **Static dependencies:** `BUILD_SHARED_LIBS=OFF`. ImGui/ImPlot are compiled into `pfl_imgui`.
-- **Embedded assets:** `cmake/EmbedResources.cmake` turns `shaders/*` into byte arrays inside the
-  exe at build time, using a generated `.cpp` that is rebuilt when a shader changes. Byte arrays
+- **Embedded assets:** `cmake/EmbedResources.cmake` turns `shaders/*` and `examples/*.json` into
+  byte arrays inside the exe at build time, using a generated `.cpp` that is rebuilt when a shader changes. Byte arrays
   (not string literals) avoid MSVC's string-literal size limit and will also work for fonts and
   icons.
 - **Windows resources:** `resources/app.rc.in` adds the app icon (`resources/app.ico`, regenerate
@@ -128,7 +130,7 @@ src/core/     pure math/physics (no OpenGL/ImGui): flow elements, superposition,
               scene model and warnings, RK4 streamlines, tracer particles
 src/render/   OpenGL wrappers: shaders (with error logs), buffers, framebuffer, particle layer
 src/ui/       ImGui/ImPlot: menus, toolbar, parameter dialog, plot view, status bar
-src/io/       JSON scene save/load (nlohmann/json)
+src/io/       JSON scene save/load (nlohmann/json), built-in example scenes, CSV exports
 src/app/      main(), window/context setup, main loop, Windows helpers
 shaders/      GLSL sources (embedded at build time)
 tests/        doctest unit tests (link only pfl_core and pfl_io)
@@ -137,7 +139,9 @@ cmake/        dependency pins, warnings, resource embedding, packaging
 third_party/  generated glad loader (see third_party/glad/README.md)
 tools/        helper scripts
 docs/         user guide and report notes
-examples/     example scenes (cylinder, lifting cylinder, Rankine bodies, corner flow, ...)
+examples/     example scenes (cylinder, lifting cylinder, Rankine bodies, corner flow, ...), also
+              built into the exe for the Examples menu (list them in src/io/CMakeLists.txt and
+              src/io/examples.cpp)
 ```
 
 ## Dependencies (pinned in `cmake/Dependencies.cmake`)

@@ -9,5 +9,5 @@ add_library(pfl_ui STATIC
     status_bar.hpp status_bar.cpp
     surface_panel.hpp surface_panel.cpp)
 target_include_directories(pfl_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(pfl_ui PUBLIC pfl_core pfl_imgui)
+target_link_libraries(pfl_ui PUBLIC pfl_core pfl_imgui PRIVATE pfl_io)
 pfl_set_warnings(pfl_ui)

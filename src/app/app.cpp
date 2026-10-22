@@ -6,6 +6,7 @@
 #include "core/streamline.hpp"
 #include "core/surface_pressure.hpp"
 #include "io/data_export.hpp"
+#include "io/examples.hpp"
 #include "io/scene_io.hpp"
 #include "render/gl.hpp"
 #include "render/gl_debug.hpp"
@@ -109,7 +110,7 @@ PressureScale pressureScale(double typicalSpeed, double freeStreamSpeed) {
 }
 
 // Actions that throw away the current scene, so they may need confirmation first.
-enum class DiscardingAction { None, New, Open, Quit };
+enum class DiscardingAction { None, New, Open, Example, Quit };
 
 class App {
 public:
@@ -135,8 +136,9 @@ private:
     void request(DiscardingAction action);
     void perform(DiscardingAction action);
     void openScene();
+    void openExample(const ExampleScene& example);
     void saveScene(bool askForPath);
-    void setScene(Scene scene, std::filesystem::path path);
+    void setScene(Scene scene, std::filesystem::path path, const ExampleScene* example = nullptr);
     void sceneEdited();
     void rebuildModel();
     void updateTitle();
@@ -174,6 +176,7 @@ private:
     FlowModel m_model;
     std::vector<std::string> m_warnings;
     std::filesystem::path m_path;
+    const ExampleScene* m_example = nullptr; // the built-in example shown, until the scene is saved
     bool m_dirty = false;
     std::string m_title;
 
@@ -186,6 +189,7 @@ private:
     ImVec2 m_plotWindowPos{0.0f, 0.0f};  // the plot window (axes included), for image export
     ImVec2 m_plotWindowSize{0.0f, 0.0f};
     DiscardingAction m_pendingAction = DiscardingAction::None;
+    std::size_t m_pendingExample = 0; // for DiscardingAction::Example
     bool m_confirmDiscard = false;
     bool m_quitConfirmed = false;
 
@@ -480,6 +484,10 @@ void App::handleMenu(const MainMenuActions& actions) {
     if (actions.quit) request(DiscardingAction::Quit);
     if (actions.newScene) request(DiscardingAction::New);
     if (actions.open) request(DiscardingAction::Open);
+    if (actions.example) {
+        m_pendingExample = *actions.example;
+        request(DiscardingAction::Example);
+    }
     if (actions.save || actions.saveAs) saveScene(actions.saveAs);
     if (actions.exportImage) exportImage();
     if (actions.exportField) exportField();
@@ -518,6 +526,7 @@ void App::perform(DiscardingAction action) {
     switch (action) {
     case DiscardingAction::New: setScene(Scene{}, {}); break;
     case DiscardingAction::Open: openScene(); break;
+    case DiscardingAction::Example: openExample(exampleScenes()[m_pendingExample]); break;
     case DiscardingAction::Quit:
         m_quitConfirmed = true;
         glfwSetWindowShouldClose(m_window, GLFW_TRUE);
@@ -537,11 +546,23 @@ void App::openScene() {
     setScene(std::move(*result.scene), *path);
 }
 
+// Loaded as an untitled scene, so that Save asks where to put it rather than overwriting anything.
+void App::openExample(const ExampleScene& example) {
+    SceneLoadResult result = loadExampleScene(example);
+    if (!result.scene) {
+        showErrorMessage(m_window, "Could not open example", result.error);
+        return;
+    }
+    setScene(std::move(*result.scene), {}, &example);
+}
+
 void App::saveScene(bool askForPath) {
     std::filesystem::path path = m_path;
     if (askForPath || path.empty()) {
         const std::optional<std::filesystem::path> chosen =
-            showSaveSceneDialog(m_window, path.empty() ? std::filesystem::path("scene.json") : path);
+            showSaveSceneDialog(m_window, !path.empty() ? path
+                                          : m_example != nullptr ? std::filesystem::path(m_example->file)
+                                                                 : std::filesystem::path("scene.json"));
         if (!chosen) return;
         path = *chosen;
     }
@@ -551,13 +572,15 @@ void App::saveScene(bool askForPath) {
         return;
     }
     m_path = path;
+    m_example = nullptr;
     m_dirty = false;
     updateTitle();
 }
 
-void App::setScene(Scene scene, std::filesystem::path path) {
+void App::setScene(Scene scene, std::filesystem::path path, const ExampleScene* example) {
     m_scene = std::move(scene);
     m_path = std::move(path);
+    m_example = example;
     m_dirty = false;
     m_plotView.setView(m_scene.plot.view);
     rebuildModel();
@@ -579,7 +602,9 @@ void App::rebuildModel() {
 }
 
 void App::updateTitle() {
-    const std::string name = m_path.empty() ? std::string("Untitled") : m_path.filename().string();
+    const std::string name = !m_path.empty()        ? m_path.filename().string()
+                             : m_example != nullptr ? std::string(m_example->title) + " (example)"
+                                                    : std::string("Untitled");
     const std::string title = name + (m_dirty ? "*" : "") + " - " + k_appName;
     if (title != m_title) {
         m_title = title;
@@ -688,7 +713,10 @@ void App::renderParticles(double dt) {
 }
 
 std::filesystem::path App::suggestedExportPath(const char* suffix) const {
-    if (m_path.empty()) return std::filesystem::path("flow").concat(suffix);
+    if (m_path.empty()) {
+        const std::filesystem::path name = m_example != nullptr ? std::filesystem::path(m_example->file).stem() : "flow";
+        return std::filesystem::path(name).concat(suffix);
+    }
     return m_path.parent_path() / std::filesystem::path(m_path.stem()).concat(suffix);
 }
 

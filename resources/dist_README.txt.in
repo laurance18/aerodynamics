@@ -20,6 +20,9 @@ CONTROLS
     doublet, sector flow or symmetry wall; enter its parameters and press Apply.
   - Plot: scroll to zoom, drag to pan. Hover an element to see it, double-click
     it to edit it.
+  - Examples menu: ready-made scenes (cylinder, lifting cylinder, Rankine
+    oval and half-body, source near a wall, corner flow, ...). One click
+    loads the scene; Save stores your own copy.
   - Elements menu: edit or delete any element.
   - File menu: New, Open, Save, Save As (scene files are JSON), Clear All,
     and exports: PNG image of the plot, CSV field data, CSV streamlines.

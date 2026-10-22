@@ -1,7 +1,8 @@
-// main_menu.hpp: the application's main menu bar (File, Elements, View) and its shortcuts.
+// main_menu.hpp: the application's main menu bar (File, Examples, Elements, View) and its shortcuts.
 //
 // File: New, Open, Save, Save As, the image and CSV exports, Clear All, Quit (and Reload shaders in
-// Debug builds). Elements: see elements_menu.hpp. View: reset the view and the plot settings that
+// Debug builds). Examples: the built-in example scenes (io/examples.hpp), each loaded with one click.
+// Elements: see elements_menu.hpp. View: reset the view and the plot settings that
 // are saved with the scene (streamline density, arrows, wall images, equipotentials, |V| or Cp
 // background, surface pressure, particles), edited in place.
 #pragma once
@@ -9,6 +10,7 @@
 #include "core/scene.hpp"
 #include "ui/elements_menu.hpp"
 
+#include <cstddef>
 #include <optional>
 
 namespace pfl {
@@ -27,6 +29,7 @@ struct MainMenuActions {
     bool reloadShaders = false;
     bool resetView = false;
     bool plotChanged = false; // a View setting in `plot` was edited
+    std::optional<std::size_t> example; // index into exampleScenes()
     ElementsMenuAction elements;
 };
 

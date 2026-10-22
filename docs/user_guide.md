@@ -6,8 +6,10 @@ elementary solutions, and redraws the streamlines every time the configuration c
 ## Getting started
 
 Run `PotentialFlowLab.exe`. It needs no installation; Windows 10/11 with an OpenGL 3.3 graphics
-driver is enough. To start from an example, use **File → Open...** and pick a file from
-`examples/`, or drag a scene file onto the exe.
+driver is enough. To start from an example, pick one from the **Examples** menu (hover an entry
+for a short description); it replaces the current scene, view and View-menu settings in one
+click. The same scenes are in `examples/` as files, and any scene file can also be opened with
+**File → Open...** or dragged onto the exe.
 
 The window has four parts:
 
@@ -15,7 +17,7 @@ The window has four parts:
 |---|---|
 | Toolbar (left) | One icon per element type. Hover for its name, click to add one. |
 | Plot (centre) | The flow in the (x, y) plane: streamlines, arrows, element markers. |
-| Menu bar (top) | **File** (including exports), **Elements** and **View** menus. |
+| Menu bar (top) | **File** (including exports), **Examples**, **Elements** and **View** menus. |
 | Status bar (bottom) | Velocity under the mouse, streamline count, wall check, warnings. |
 
 ## The flow view
@@ -117,8 +119,9 @@ approximate.
 **File → Save** (Ctrl+S) and **Save As...** (Ctrl+Shift+S) write the scene as a JSON file: every
 element with its parameters, the walls, the current view and the View-menu settings. **File →
 Open...** (Ctrl+O) restores it exactly. **File → New** (Ctrl+N) starts an empty scene with
-default settings. The title bar shows `*` when there are unsaved changes, and New, Open and Quit
-ask before discarding them.
+default settings. The title bar shows `*` when there are unsaved changes, and New, Open, the
+Examples menu and Quit ask before discarding them. An example opens as an unsaved copy, so **Save**
+asks for a file name and never changes the built-in example.
 
 Files are plain text and can be edited by hand; angles are stored in degrees. A file with an
 invalid element (for example θ₂ ≤ θ₁) is rejected with a message naming the element.

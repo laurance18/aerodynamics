@@ -2,6 +2,7 @@
 #include "core/scene.hpp"
 #include "core/streamline.hpp"
 #include "io/data_export.hpp"
+#include "io/examples.hpp"
 #include "io/scene_io.hpp"
 
 #include <doctest/doctest.h>
@@ -312,6 +313,28 @@ TEST_CASE("every example scene loads") {
         ++count;
     }
     CHECK(count > 0);
+}
+
+TEST_CASE("built-in examples: every one loads and matches its file in examples/") {
+    for (const ExampleScene& example : exampleScenes()) {
+        INFO(example.file);
+        const SceneLoadResult embedded = loadExampleScene(example);
+        REQUIRE_MESSAGE(embedded.scene.has_value(), embedded.error);
+        CHECK_FALSE(embedded.scene->elements.empty());
+        const SceneLoadResult file = loadSceneFile(std::filesystem::path(PFL_EXAMPLES_DIR) / example.file);
+        REQUIRE(file.scene);
+        CHECK(sceneToJson(*embedded.scene) == sceneToJson(*file.scene));
+    }
+}
+
+TEST_CASE("built-in examples: every file in examples/ is in the menu") {
+    for (const auto& entry : std::filesystem::directory_iterator(PFL_EXAMPLES_DIR)) {
+        if (entry.path().extension() != ".json") continue;
+        const std::string name = entry.path().filename().string();
+        INFO(name);
+        const auto examples = exampleScenes();
+        CHECK(std::any_of(examples.begin(), examples.end(), [&name](const ExampleScene& e) { return name == e.file; }));
+    }
 }
 
 TEST_CASE("plot background: older files with speed_contours still load") {

@@ -1,5 +1,6 @@
 #include "ui/main_menu.hpp"
 
+#include "io/examples.hpp"
 #include "ui/style.hpp"
 
 #include <imgui.h>
@@ -8,6 +9,16 @@ namespace pfl {
 namespace {
 
 constexpr const char* k_discardPopup = "Unsaved changes";
+
+void drawExamplesMenu(MainMenuActions& actions) {
+    if (!ImGui::BeginMenu("Examples")) return;
+    const std::span<const ExampleScene> examples = exampleScenes();
+    for (std::size_t i = 0; i < examples.size(); ++i) {
+        if (ImGui::MenuItem(examples[i].title)) actions.example = i;
+        ImGui::SetItemTooltip("%s", examples[i].description);
+    }
+    ImGui::EndMenu();
+}
 
 void drawViewMenu(PlotSettings& plot, MainMenuActions& actions) {
     if (!ImGui::BeginMenu("View")) return;
@@ -90,6 +101,7 @@ MainMenuActions drawMainMenu(const Scene& scene, PlotSettings& plot, bool canRel
             if (ImGui::MenuItem("Quit", "Alt+F4")) actions.quit = true;
             ImGui::EndMenu();
         }
+        drawExamplesMenu(actions);
         actions.elements = drawElementsMenu(scene);
         drawViewMenu(plot, actions);
         ImGui::EndMainMenuBar();
