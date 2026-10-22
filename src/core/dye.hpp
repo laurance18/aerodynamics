@@ -10,8 +10,9 @@
 // it is fast.
 //
 // A point dies when it leaves the bounds, reaches a position the caller rejects (outside the flow
-// domain, too close to a singular point) or exceeds maxAge; a streakline is broken where its points
-// have died. A streak stays fed by the same emitter index from step to step, so moving a rake drags
+// domain, too close to a singular point), exceeds maxAge, or moves too fast to be followed (a step
+// that would need more than maxSubsteps sub-steps, next to a singular point); a streakline is
+// broken where its points have died. A streak stays fed by the same emitter index from step to step, so moving a rake drags
 // its dye along; detach() cuts every streak loose (after rakes are added or removed, or their
 // emitter count changes), and detached streaks drift away until their points die.
 #pragma once
@@ -99,18 +100,20 @@ template <typename VelocityFn, typename ValidFn>
 void DyeSystem::step(double dt, std::span<const DyeEmitter> emitters, const VelocityFn& velocity,
                      const ValidFn& isValid) {
     const DyeSettings& s = m_settings;
-    const auto keep = [&](const DyePoint& p) {
-        return std::isfinite(p.pos.x) && std::isfinite(p.pos.y) && s.bounds.contains(p.pos) && p.age <= s.maxAge &&
-               isValid(p.pos);
+    // Advects p by `time`; false if it has to die.
+    const auto move = [&](DyePoint& p, double time) {
+        bool resolved = true;
+        if (time > 0.0) advect(p.pos, time, velocity, s.maxStepLength, s.maxSubsteps, &resolved);
+        return resolved && std::isfinite(p.pos.x) && std::isfinite(p.pos.y) && s.bounds.contains(p.pos) &&
+               p.age <= s.maxAge && isValid(p.pos);
     };
 
     // Existing points.
     for (DyeStreak& streak : m_streaks) {
         for (DyePoint& p : streak.points) {
             if (!p.alive) continue;
-            advect(p.pos, dt, velocity, s.maxStepLength, s.maxSubsteps);
             p.age += dt;
-            p.alive = keep(p);
+            p.alive = move(p, dt);
         }
     }
 
@@ -141,8 +144,7 @@ void DyeSystem::step(double dt, std::span<const DyeEmitter> emitters, const Velo
                 p.pos = origin;
                 p.age = m_sinceRelease + k * s.releaseInterval;
                 p.serial = streak.points.empty() ? 0 : streak.points.back().serial + 1;
-                if (p.age > 0.0) advect(p.pos, p.age, velocity, s.maxStepLength, s.maxSubsteps);
-                p.alive = keep(p);
+                p.alive = move(p, p.age);
                 streak.points.push_back(p);
             }
         }

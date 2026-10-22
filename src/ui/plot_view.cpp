@@ -31,6 +31,9 @@ constexpr float k_speedAlpha = 0.6f;
 constexpr float k_pressureAlpha = 0.75f;
 constexpr float k_dyeWidthPx = 2.2f;
 constexpr float k_dyeDimming = 0.5f;   // brightness of every other pulse
+// Successive releases normally land a few pixels apart. Farther apart, they have separated (on
+// either side of a stagnation point, or after the rake jumped) and are not joined by a line.
+constexpr float k_dyeGapPx = 40.0f;
 constexpr double k_dyeFadeFraction = 0.3; // dye fades out over this last part of its life
 constexpr float k_minRakePx = 8.0f;    // a shorter drag places a rake of the default length
 constexpr double k_defaultRakeFraction = 0.4; // ... this fraction of the view height, vertical
@@ -255,10 +258,11 @@ Vec2 snapped(Vec2 p, const Rect& limits, float heightPx, bool coarse) {
     return {std::round(p.x / step) * step + 0.0, std::round(p.y / step) * step + 0.0};
 }
 
-// Dye streaks as polylines, split where points have died and where the pulse changes (the pieces
-// share their end points, so a streak has no gaps).
+// Dye streaks as polylines, split where points have died or are too far apart (k_dyeGapPx), and
+// where the pulse changes (those pieces share their end points, so a pulse leaves no gap).
 void drawDye(ImDrawList* dl, const DyeLayer& dye) {
     const float width = k_dyeWidthPx * uiScale();
+    const float maxGap = k_dyeGapPx * uiScale();
     const int pulse = std::max(dye.pulseLength, 1);
     const double fadeAge = (1.0 - k_dyeFadeFraction) * dye.maxAge;
     std::vector<ImVec2> run;
@@ -284,6 +288,13 @@ void drawDye(ImDrawList* dl, const DyeLayer& dye) {
             }
             const int band = static_cast<int>((p.serial / static_cast<std::uint32_t>(pulse)) % 2);
             const ImVec2 pixel = toPixels(p.pos);
+            if (!run.empty()) {
+                const ImVec2 d = pixel - run.back();
+                if (d.x * d.x + d.y * d.y > maxGap * maxGap) {
+                    flush(runBand, runAge);
+                    runBand = -1;
+                }
+            }
             if (band != runBand && runBand >= 0) {
                 run.push_back(pixel); // the next pulse starts where this one ends
                 flush(runBand, runAge);
@@ -523,6 +534,7 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
 
     constexpr ImPlotFlags plotFlags = ImPlotFlags_Equal | ImPlotFlags_NoTitle | ImPlotFlags_NoLegend |
                                       ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
+    bool openRakeMenu = false;
     if (ImPlot::BeginPlot("##flow", ImVec2(-1.0f, -1.0f), plotFlags)) {
         ImPlot::SetupAxes("x", "y");
         const Rect& v = m_pendingView ? *m_pendingView : scene.plot.view;
@@ -676,7 +688,7 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
             if (pressed) m_grab = Grab{.target = rakeTarget, .index = *rakeHit, .pressWorld = mouseWorld, .rake = rake};
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
                 m_rakeMenu = rakeHit;
-                ImGui::OpenPopup(k_rakeMenu);
+                openRakeMenu = true;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Delete)) result.rakeRemove = rakeHit;
         } else if (stagnationHit) {
@@ -694,6 +706,9 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
     }
     input.PanMod = panMod;
 
+    // Opened here rather than inside the plot: the plot has its own ID scope, so a popup opened
+    // there would not be the one BeginPopup() looks for out here.
+    if (openRakeMenu) ImGui::OpenPopup(k_rakeMenu);
     if (ImGui::BeginPopup(k_rakeMenu)) {
         if (m_rakeMenu && *m_rakeMenu < scene.rakes.size()) {
             const std::size_t i = *m_rakeMenu;

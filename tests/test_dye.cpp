@@ -102,6 +102,23 @@ TEST_CASE("dye dies outside the bounds, at invalid positions and of old age") {
     }
 }
 
+TEST_CASE("dye too close to a singular point to be followed dies instead of being flung away") {
+    DyeSystem dye;
+    dye.settings() = testSettings();
+    // A vortex: |V| = 1 / r, so one step at r = 0.05 would need 0.33 / 0.01 = 33 > 16 sub-steps.
+    const auto vortex = [](Vec2 p) { return perp(p) / lengthSquared(p); };
+    const std::vector<DyeEmitter> emitters = {{.position = {0.05, 0.0}}, {.position = {1.0, 0.0}}};
+    for (int i = 0; i < 120; ++i) dye.step(1.0 / 60.0, emitters, vortex, alwaysValid);
+
+    REQUIRE(dye.streaks().size() == 2);
+    CHECK(dye.streaks()[0].points.empty());
+    REQUIRE_FALSE(dye.streaks()[1].points.empty());
+    for (const DyePoint& p : dye.streaks()[1].points) {
+        CHECK(p.alive);
+        CHECK(length(p.pos) == doctest::Approx(1.0).epsilon(1e-3));
+    }
+}
+
 TEST_CASE("detached dye drifts away and a moved emitter keeps its streak") {
     DyeSystem dye;
     dye.settings() = testSettings();

@@ -27,11 +27,15 @@ struct ParticleSettings {
 
 // Moves `p` by dt along `velocity` (any callable Vec2 -> Vec2) with midpoint RK2, split into
 // sub-steps so that none travels farther than maxStepLength (at most maxSubsteps of them).
-// Returns the speed of the last sub-step.
+// Returns the speed of the last sub-step. If given, `resolved` is set to false when maxSubsteps
+// were not enough, so the sub-steps were longer than maxStepLength and the result is unreliable
+// (next to a singular point a single step can then fling the point far away).
 template <typename VelocityFn>
-double advect(Vec2& p, double dt, const VelocityFn& velocity, double maxStepLength, int maxSubsteps) {
+double advect(Vec2& p, double dt, const VelocityFn& velocity, double maxStepLength, int maxSubsteps,
+              bool* resolved = nullptr) {
     const Vec2 v0 = velocity(p);
     const double travel = length(v0) * dt;
+    if (resolved != nullptr) *resolved = travel <= maxStepLength * maxSubsteps;
     const int substeps = std::clamp(static_cast<int>(std::ceil(travel / maxStepLength)), 1, maxSubsteps);
     const double h = dt / substeps;
 
