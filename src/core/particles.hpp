@@ -1,8 +1,9 @@
 // particles.hpp: CPU tracer particles advected through a velocity field.
 //
-// Demo-grade: midpoint RK2 with per-particle sub-stepping so fast particles near a vortex core
-// stay stable. Particles respawn uniformly inside the domain when they leave it, come within
-// respawnRadius of the origin, or exceed maxAge (stops everything collapsing onto a few paths).
+// Midpoint RK2 with per-particle sub-stepping so fast particles near a singularity stay stable.
+// Particles respawn uniformly inside the bounds when they leave them, reach a position the caller
+// rejects (outside the flow domain, too close to a singular point), or exceed maxAge (stops
+// everything collapsing onto a few paths).
 #pragma once
 
 #include "core/vec2.hpp"
@@ -17,16 +18,8 @@
 
 namespace pfl {
 
-struct Domain {
-    Vec2 min{-1.0, -1.0};
-    Vec2 max{1.0, 1.0};
-
-    bool contains(Vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
-};
-
 struct ParticleSettings {
-    Domain domain{{-2.0, -1.25}, {2.0, 1.25}};
-    double respawnRadius = 0.06;
+    Rect bounds{{-2.0, -1.25}, {2.0, 1.25}};
     double maxAge = 8.0;
     double maxStepLength = 0.01; // largest distance a particle may travel in one sub-step
     int maxSubsteps = 16;
@@ -42,26 +35,31 @@ class ParticleSystem {
 public:
     explicit ParticleSystem(std::size_t count, ParticleSettings settings = {}, std::uint32_t seed = 12345);
 
-    // Advances every particle by dt. `velocity` is any callable Vec2 -> Vec2 (a template rather
-    // than std::function so the per-particle call stays cheap, even in Debug builds).
-    template <typename VelocityFn>
-    void step(double dt, const VelocityFn& velocity);
+    // Advances every particle by dt. `velocity` is any callable Vec2 -> Vec2 and `isValid` any
+    // callable Vec2 -> bool (templates rather than std::function so the per-particle calls stay
+    // cheap, even in Debug builds).
+    template <typename VelocityFn, typename ValidFn>
+    void step(double dt, const VelocityFn& velocity, const ValidFn& isValid);
 
-    void setDomain(const Domain& domain) { m_settings.domain = domain; }
+    // Scatters every particle again, e.g. after the flow changed.
+    template <typename ValidFn>
+    void respawnAll(const ValidFn& isValid);
+
+    ParticleSettings& settings() { return m_settings; }
     const ParticleSettings& settings() const { return m_settings; }
     std::span<const Particle> particles() const { return m_particles; }
 
 private:
-    bool needsRespawn(const Particle& p) const;
-    void respawn(Particle& p);
+    template <typename ValidFn>
+    void respawn(Particle& p, const ValidFn& isValid);
 
     ParticleSettings m_settings;
     std::vector<Particle> m_particles;
     std::mt19937 m_rng;
 };
 
-template <typename VelocityFn>
-void ParticleSystem::step(double dt, const VelocityFn& velocity) {
+template <typename VelocityFn, typename ValidFn>
+void ParticleSystem::step(double dt, const VelocityFn& velocity, const ValidFn& isValid) {
     for (Particle& p : m_particles) {
         const Vec2 v0 = velocity(p.pos);
         const double travel = length(v0) * dt;
@@ -79,8 +77,34 @@ void ParticleSystem::step(double dt, const VelocityFn& velocity) {
         p.speed = length(k2);
         p.age += dt;
 
-        if (needsRespawn(p)) respawn(p);
+        const bool finite = std::isfinite(p.pos.x) && std::isfinite(p.pos.y);
+        if (!finite || !m_settings.bounds.contains(p.pos) || p.age > m_settings.maxAge || !isValid(p.pos)) {
+            respawn(p, isValid);
+        }
     }
+}
+
+template <typename ValidFn>
+void ParticleSystem::respawnAll(const ValidFn& isValid) {
+    std::uniform_real_distribution<double> age(0.0, m_settings.maxAge);
+    for (Particle& p : m_particles) {
+        respawn(p, isValid);
+        p.age = age(m_rng); // stagger respawns so they don't all happen on the same frame
+    }
+}
+
+template <typename ValidFn>
+void ParticleSystem::respawn(Particle& p, const ValidFn& isValid) {
+    constexpr int maxTries = 16; // a few rejections are normal; give up rather than stall
+    const Rect& b = m_settings.bounds;
+    std::uniform_real_distribution<double> ux(b.min.x, b.max.x);
+    std::uniform_real_distribution<double> uy(b.min.y, b.max.y);
+    for (int i = 0; i < maxTries; ++i) {
+        p.pos = {ux(m_rng), uy(m_rng)};
+        if (isValid(p.pos)) break;
+    }
+    p.age = 0.0;
+    p.speed = 0.0;
 }
 
 } // namespace pfl

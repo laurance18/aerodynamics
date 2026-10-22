@@ -1,0 +1,8 @@
+{
+  "format": "pfl-scene",
+  "version": 1,
+  "elements": [
+    {"type": "sector", "strength": 1, "x": 0, "y": 0, "theta1_deg": 0, "theta2_deg": 90}
+  ],
+  "plot": {"x_min": -1, "x_max": 3, "y_min": -0.5, "y_max": 2.5, "streamline_density": 24, "arrows": true, "arrow_spacing_px": 110, "show_images": true, "particles": true, "particle_trails": true}
+}

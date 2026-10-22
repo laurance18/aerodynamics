@@ -6,8 +6,7 @@ pfl_embed_resources(pfl_shaders
         shaders/particles.vert
         shaders/particles.frag
         shaders/fullscreen.vert
-        shaders/fade.frag
-        shaders/composite.frag)
+        shaders/fade.frag)
 
 add_library(pfl_render STATIC
     gl.hpp
@@ -17,8 +16,7 @@ add_library(pfl_render STATIC
     framebuffer.hpp framebuffer.cpp
     particle_renderer.hpp particle_renderer.cpp
     trail_renderer.hpp trail_renderer.cpp
-    gl_debug.hpp gl_debug.cpp
-    streamline_renderer.hpp)
+    gl_debug.hpp gl_debug.cpp)
 target_include_directories(pfl_render PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(pfl_render PUBLIC pfl_core glad PRIVATE pfl_shaders)
 if(PFL_SHADERS_FROM_DISK)

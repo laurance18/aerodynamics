@@ -1,12 +1,21 @@
 # Potential Flow Lab
 
 An interactive 2D potential-flow simulator in C++20, built as a senior mechanical-engineering
-semester project. It will superpose elementary flows (uniform flow, source/sink, vortex, doublet,
-sector flow, symmetry walls), draw streamlines, and animate tracer particles on the GPU.
+semester project. It superposes elementary flows (uniform flow, source/sink, vortex, doublet,
+sector flow) and straight symmetry walls, draws evenly spaced streamlines with direction arrows,
+and animates tracer particles on the GPU.
 
-**Current state:** repository skeleton plus a toolchain demo. The demo shows a window with ImGui
-menus, a dialog and tooltips, an ImPlot frame-time graph, and 10,000 particles advected through
-a made-up vortex field and drawn with a custom OpenGL shader.
+- Left toolbar: one icon per element type (hover for the name); a click opens a parameter dialog
+  with Apply / Cancel.
+- Main plot: labelled (x, y) axes, scroll to zoom, drag to pan; streamlines are recomputed after
+  every add, edit or delete. Hover an element to name it, double-click it to edit it.
+- **Elements** menu: every element with its parameters, each with Edit and Delete.
+- **File** menu: New, Open, Save, Save As (JSON scenes, see `examples/`), Clear All.
+- **View** menu: streamline density, arrows, wall images, tracer particles.
+- Status bar: velocity and Cp under the mouse, the numerical wall check, and warnings.
+
+See [docs/user_guide.md](docs/user_guide.md) for usage and [docs/report_notes.md](docs/report_notes.md)
+for the equations, conventions and design decisions.
 
 The release build is one self-contained `PotentialFlowLab.exe`. It needs no installer, DLLs,
 Visual C++ Redistributable or extra folders.
@@ -67,7 +76,8 @@ dumpbin /headers    build\msvc\bin\Release\PotentialFlowLab.exe | findstr subsys
 ```
 
 - The dependency list should contain **only Windows system DLLs**. Currently those are:
-  `KERNEL32.dll USER32.dll GDI32.dll SHELL32.dll IMM32.dll`.
+  `COMDLG32.dll KERNEL32.dll USER32.dll GDI32.dll SHELL32.dll IMM32.dll` (COMDLG32 provides
+  the Open / Save dialogs).
 - `OPENGL32.dll` doesn't appear because GLFW loads it at runtime.
 - Any `VCRUNTIME140*.dll`, `MSVCP140*.dll`, `api-ms-win-crt-*.dll` or `glfw3.dll` means the
   static linking broke.
@@ -97,20 +107,20 @@ As a final check, copy the exe alone into an empty folder on another PC and doub
 ## Repository layout
 
 ```
-src/core/     pure math/physics (no OpenGL/ImGui): Vec2, demo flow, particles; future elements,
-              superposition, RK4 streamlines, image systems for walls
-src/render/   OpenGL wrappers: shaders (with error logs), buffers, framebuffer, renderers
-src/ui/       ImGui panels: main menu, demo panel; future toolbar, Elements menu, dialogs
-src/io/       future JSON save/load (nlohmann/json)
+src/core/     pure math/physics (no OpenGL/ImGui): flow elements, superposition, wall images,
+              scene model and warnings, RK4 streamlines, tracer particles
+src/render/   OpenGL wrappers: shaders (with error logs), buffers, framebuffer, particle layer
+src/ui/       ImGui/ImPlot: menus, toolbar, parameter dialog, plot view, status bar
+src/io/       JSON scene save/load (nlohmann/json)
 src/app/      main(), window/context setup, main loop, Windows helpers
 shaders/      GLSL sources (embedded at build time)
-tests/        doctest unit tests (link only pfl_core)
+tests/        doctest unit tests (link only pfl_core and pfl_io)
 resources/    icon, Windows .rc template, README.txt for the zip
 cmake/        dependency pins, warnings, resource embedding, packaging
 third_party/  generated glad loader (see third_party/glad/README.md)
 tools/        helper scripts
 docs/         user guide and report notes
-examples/     saved flow configurations (future)
+examples/     example scenes (cylinder, lifting cylinder, Rankine bodies, corner flow, ...)
 ```
 
 ## Dependencies (pinned in `cmake/Dependencies.cmake`)
@@ -126,7 +136,7 @@ examples/     saved flow configurations (future)
 
 ## OpenGL notes
 
-The demo requests an **OpenGL 3.3 core** context. On Windows, current NVIDIA, AMD and Intel
+The app requests an **OpenGL 3.3 core** context. On Windows, current NVIDIA, AMD and Intel
 drivers all provide 4.6, so **4.3 compute shaders** are available for later GPU particle work.
 Keep a 3.3 fallback anyway, because some machines (VMs, Remote Desktop, old drivers) are limited
 to older versions. macOS tops out at 4.1, but this project targets Windows only.

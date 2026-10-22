@@ -1,7 +1,23 @@
-// elements_menu.hpp: "Elements" main-menu entry (future).
+// elements_menu.hpp: the "Elements" pull-down menu.
 //
-// Will list the elementary flows (uniform, source/sink, vortex, doublet, sector, symmetry wall)
-// and open the matching parameter dialog to add one to the flow field.
+// Lists every element currently in the scene with its parameters. Each entry opens a submenu to
+// edit or delete that element; "Delete all" empties the list.
 #pragma once
 
-namespace pfl {} // namespace pfl
+#include "core/scene.hpp"
+
+#include <cstddef>
+#include <optional>
+
+namespace pfl {
+
+struct ElementsMenuAction {
+    std::optional<std::size_t> edit;
+    std::optional<std::size_t> remove;
+    bool removeAll = false;
+};
+
+// Draws the menu; call between BeginMainMenuBar() and EndMainMenuBar().
+ElementsMenuAction drawElementsMenu(const Scene& scene);
+
+} // namespace pfl

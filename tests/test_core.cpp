@@ -1,4 +1,3 @@
-#include "core/dummy_flow.hpp"
 #include "core/particles.hpp"
 #include "core/vec2.hpp"
 
@@ -18,33 +17,36 @@ TEST_CASE("Vec2 arithmetic") {
     CHECK(perp(Vec2{1.0, 0.0}) == Vec2{0.0, 1.0});
 }
 
-TEST_CASE("pure vortex velocity is tangential and counter-clockwise") {
-    const DemoFlowParams params{.strength = 1.5, .drift = 0.0, .coreEps = 0.05};
-    for (const Vec2 p : {Vec2{1.0, 0.0}, Vec2{-0.3, 0.7}, Vec2{2.0, -1.0}}) {
-        const Vec2 v = demoVelocity(p, params);
-        CHECK(dot(v, p) == doctest::Approx(0.0));
-        CHECK(cross(p, v) > 0.0);
-        CHECK(length(v) == doctest::Approx(params.strength * length(p) / (lengthSquared(p) + params.coreEps)));
-    }
+TEST_CASE("clipLine clips a line to a rectangle") {
+    const Rect rect{{-1.0, -1.0}, {1.0, 1.0}};
+    double t0 = -1e300;
+    double t1 = 1e300;
+    REQUIRE(clipLine({0.0, 0.5}, {1.0, 0.0}, rect, t0, t1));
+    CHECK(t0 == doctest::Approx(-1.0));
+    CHECK(t1 == doctest::Approx(1.0));
+
+    t0 = 0.0; // a ray
+    t1 = 1e300;
+    REQUIRE(clipLine({0.0, 0.0}, {1.0, 1.0}, rect, t0, t1));
+    CHECK(t0 == doctest::Approx(0.0));
+    CHECK(t1 == doctest::Approx(1.0));
+
+    t0 = -1e300;
+    t1 = 1e300;
+    CHECK_FALSE(clipLine({0.0, 2.0}, {1.0, 0.0}, rect, t0, t1));
 }
 
-TEST_CASE("zero strength leaves only the uniform drift") {
-    const DemoFlowParams params{.strength = 0.0, .drift = 0.7, .coreEps = 0.05};
-    CHECK(demoVelocity({0.4, -1.2}, params) == Vec2{0.7, 0.0});
-    CHECK(demoMaxSpeed(params) == doctest::Approx(0.7));
-}
-
-TEST_CASE("particles stay inside the domain and outside the respawn radius") {
+TEST_CASE("particles stay inside the bounds and in valid positions") {
     ParticleSettings settings;
-    settings.domain = {{-1.0, -1.0}, {1.0, 1.0}};
+    settings.bounds = {{-1.0, -1.0}, {1.0, 1.0}};
     ParticleSystem system(500, settings, 42);
-    const DemoFlowParams params{};
-    for (int i = 0; i < 200; ++i) {
-        system.step(1.0 / 60.0, [&](Vec2 p) { return demoVelocity(p, params); });
-    }
+    const auto velocity = [](Vec2 p) { return perp(p) / (lengthSquared(p) + 0.05) + Vec2{0.3, 0.0}; };
+    const auto valid = [](Vec2 p) { return length(p) >= 0.1; };
+    for (int i = 0; i < 200; ++i) system.step(1.0 / 60.0, velocity, valid);
+
     REQUIRE(system.particles().size() == 500);
     for (const Particle& p : system.particles()) {
-        CHECK(settings.domain.contains(p.pos));
-        CHECK(length(p.pos) >= settings.respawnRadius);
+        CHECK(settings.bounds.contains(p.pos));
+        CHECK(valid(p.pos));
     }
 }
