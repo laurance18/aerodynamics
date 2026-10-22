@@ -41,6 +41,9 @@ std::string describe(const SceneElement& element);
 // Why the parameters are invalid, or nullopt if they are fine.
 std::optional<std::string> sceneElementError(const SceneElement& element);
 
+// Filled contour bands drawn under the streamlines.
+enum class Background { None, Speed, PressureCoefficient };
+
 struct PlotSettings {
     Rect view{{-4.0, -2.5}, {4.0, 2.5}};
     int streamlineDensity = 24; // streamlines across the view height
@@ -48,7 +51,8 @@ struct PlotSettings {
     double arrowSpacingPx = 110.0; // screen distance between direction arrows along a streamline
     bool showImages = true;        // draw the wall images of elements
     bool showEquipotentials = false;
-    bool showSpeedContours = false; // filled |V| bands under the streamlines
+    Background background = Background::None;
+    bool showSurfacePressure = false; // body surfaces coloured by Cp, pressure arrows and the Cp panel
     bool showParticles = true;
     bool particleTrails = true;
 };
@@ -63,7 +67,8 @@ struct FlowModel {
     std::vector<FlowElement> images;  // the wall images on their own, for drawing
     std::vector<SymmetryWall> walls;
     bool imagesExact = true;
-    double freeStreamSpeed = 0.0;     // |sum of the constrained uniform flows|; the Cp reference
+    Vec2 freeStream;                  // sum of the constrained uniform flows
+    double freeStreamSpeed = 0.0;     // |freeStream|; the Cp reference
 };
 
 FlowModel buildFlowModel(const Scene& scene);

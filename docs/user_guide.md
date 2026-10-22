@@ -50,7 +50,7 @@ To change or remove an element later, open the **Elements** menu: every element 
 its parameters; hover one and choose **Edit...** or **Delete**. **Delete all** (or **File → Clear
 All**) removes every element but keeps the view.
 
-## Streamlines, equipotentials, speed contours and tracer particles
+## Streamlines, equipotentials, contours and tracer particles
 
 The **View** menu holds the plot settings, which are saved with the scene:
 
@@ -60,11 +60,41 @@ The **View** menu holds the plot settings, which are saved with the scene:
 - **Equipotential lines** (orange): lines of constant velocity potential φ. They cross every
   streamline at right angles and use the same spacing, so in regions of typical speed the two
   families form roughly square cells.
-- **Speed contours |V|**: filled bands of velocity magnitude from 0 to twice the typical (median)
-  speed in the view, with a colour scale in the top-right corner. Faster regions, such as those
-  next to a source or vortex, use the top band.
+- **Background**: filled bands under the streamlines, with a colour scale in the top-right corner.
+  - *Speed contours |V|*: velocity magnitude from 0 to twice the typical (median) speed in the
+    view. Faster regions, such as those next to a source or vortex, use the top band.
+  - *Pressure coefficient Cp*: Cp = 1 − |V|²/V∞² in bands of 0.25 (wider for very low Cp). Red
+    is above and blue below the free-stream pressure; Cp = 0 is neutral grey. The scale runs from 1
+    (stagnation) down to the Cp of twice the typical speed. Lower values, as next to a singular
+    point, use the bottom band. Cp needs a uniform flow; without one, the scale box says so.
+- **Surface pressure**: see the next section.
 - **Tracer particles** and **Particle trails**: animated particles coloured by speed (blue slow,
   red fast). They are a visual aid only; the streamlines are the result.
+
+## Surface pressure and forces
+
+**View → Surface pressure** finds the bodies in the flow: the closed bodies (cylinder, lifting
+cylinder, Rankine oval) and half-bodies bounded by the dividing streamlines through stagnation
+points. It needs a uniform flow.
+
+- In the plot, each body surface is coloured by Cp on the same scale as the Cp background. Arrows
+  normal to the surface point towards it where Cp > 0 (pressure) and away from it where Cp < 0
+  (suction). Arrow length is proportional to |Cp|. With several bodies, each is numbered.
+- A panel on the right plots Cp along the surface. The x axis can be the angle θ around the body
+  (from the free-stream direction, counter-clockwise), x/c along the free stream, or the arc
+  length s from the front stagnation point. Half-bodies are open, so they are only shown against
+  s. The Cp axis is inverted (suction up), as usual in aerodynamics. For a circular cylinder the
+  exact curve is drawn as a light band under the computed one. Hover the plot to read a point;
+  the plot on the left marks it on the body.
+- Below the plot, for every closed body: the chord, the circulation enclosed, the lowest Cp, and the
+  drag and lift per unit span from integrating Cp around the surface (D′/q∞, L′/q∞, c_l). When the
+  body is alone in a uniform stream, the exact values are shown next to them: zero drag
+  (d'Alembert) and L′/q∞ = 2Γ/V∞ (Kutta–Joukowski).
+
+A body is only found if its dividing streamlines close. Next to other bodies the flow is no longer
+symmetric and they miss each other slightly. Gaps up to 10 % of the distance between the
+stagnation points are closed with a short segment, and the panel says so. Some flows have no closed
+body at all: for a source and sink at incidence, part of the source's fluid escapes downstream.
 
 ## Symmetry walls
 
@@ -95,13 +125,14 @@ invalid element (for example θ₂ ≤ θ₁) is rejected with a message naming 
 
 ## Exporting images and data
 
-The **File** menu has three exports. Each one asks where to save the file.
+The **File** menu has four exports. Each one asks where to save the file.
 
 | Export | What it writes |
 |---|---|
 | **Export image (PNG)...** | The plot, axes included, exactly as shown (hover highlights are left out). |
 | **Export field data (CSV)...** | `x, y, u, v, speed, phi, psi, cp` at the nodes of a 201-column grid over the current view. |
 | **Export lines (CSV)...** | `kind, line, x, y`: every point of every streamline and equipotential line shown. |
+| **Export surface Cp (CSV)...** | `body, closed, x, y, s, streamwise, theta_deg, cp, cp_exact`: every point of every body surface found (see *Surface pressure and forces*). `streamwise` is x/c for a closed body and the distance downstream of the stagnation point for a half-body; `cp_exact` is the closed-form Cp for a circular cylinder, otherwise `NaN`. |
 
 In the field file, `NaN` marks nodes outside the flow domain or on a singular point, and `cp` is
 `NaN` when there is no uniform flow. φ is multivalued around a vortex and ψ around a source. The
@@ -114,7 +145,7 @@ the element. The files open directly in Excel, MATLAB (`readtable`) or Python
 The same exports can be run without the interface, for example to regenerate figures:
 
 ```powershell
-PotentialFlowLab.exe examples\cylinder.json --export-image cylinder.png --export-field cylinder.csv --export-lines lines.csv
+PotentialFlowLab.exe examples\cylinder.json --export-image cylinder.png --export-field cylinder.csv --export-lines lines.csv --export-surface surface.csv
 ```
 
 The window opens briefly, the scene is drawn, the files are written and the program exits. The

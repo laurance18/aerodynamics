@@ -1,6 +1,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "ui/style.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -16,6 +17,17 @@ ImVec2 polar(float r, float angle) { return {r * std::cos(angle), r * std::sin(a
 ImU32 fadeColor(ImU32 colour, float alpha) {
     const auto a = static_cast<ImU32>(static_cast<float>((colour >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
     return (colour & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+}
+
+ImU32 pressureColor(double cp, double lowest, float alpha) {
+    constexpr ImVec4 neutral{56.0f / 255.0f, 56.0f / 255.0f, 53.0f / 255.0f, 1.0f};
+    constexpr ImVec4 pressure{230.0f / 255.0f, 103.0f / 255.0f, 103.0f / 255.0f, 1.0f};
+    constexpr ImVec4 suction{85.0f / 255.0f, 152.0f / 255.0f, 231.0f / 255.0f, 1.0f};
+    const bool positive = cp >= 0.0;
+    const float t = static_cast<float>(std::clamp(positive ? cp : cp / lowest, 0.0, 1.0));
+    const ImVec4& pole = positive ? pressure : suction;
+    return ImGui::ColorConvertFloat4ToU32(
+        {neutral.x + (pole.x - neutral.x) * t, neutral.y + (pole.y - neutral.y) * t, neutral.z + (pole.z - neutral.z) * t, alpha});
 }
 
 void drawArrowHead(ImDrawList* dl, ImVec2 tip, ImVec2 dir, float size, ImU32 colour) {

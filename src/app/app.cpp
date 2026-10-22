@@ -4,6 +4,7 @@
 #include "core/particles.hpp"
 #include "core/scene.hpp"
 #include "core/streamline.hpp"
+#include "core/surface_pressure.hpp"
 #include "io/data_export.hpp"
 #include "io/scene_io.hpp"
 #include "render/gl.hpp"
@@ -15,6 +16,7 @@
 #include "ui/parameter_dialog.hpp"
 #include "ui/plot_view.hpp"
 #include "ui/status_bar.hpp"
+#include "ui/surface_panel.hpp"
 #include "ui/style.hpp"
 #include "ui/toolbar.hpp"
 
@@ -47,10 +49,11 @@ constexpr float k_fontSize = 17.0f;
 constexpr double k_streamlineMargin = 0.05;
 constexpr double k_singularRadiusPx = 3.0; // lines stop this many pixels from a singular point
 
-// Speed contours: |V| is sampled on cells this many pixels wide; the colour scale tops out at this
-// multiple of the typical speed in the view.
+// Contours: |V| (and Cp from it) is sampled on cells this many pixels wide; the |V| scale tops out
+// at this multiple of the typical speed in the view, in this many bands.
 constexpr float k_speedCellPx = 4.0f;
 constexpr double k_speedScaleFactor = 2.0;
+constexpr int k_speedBands = 10;
 
 // Field CSV export: grid nodes across the view (rows follow from the aspect ratio).
 constexpr int k_exportColumns = 201;
@@ -89,6 +92,20 @@ Vec2 newElementPosition(const Rect& view) {
     const Vec2 c = view.center();
     const double step = std::pow(10.0, std::floor(std::log10(std::max(view.size().y, 1e-12))) - 1.0);
     return {std::round(c.x / step) * step + 0.0, std::round(c.y / step) * step + 0.0};
+}
+
+// The Cp colour scale: from 1 (stagnation) down to the Cp of twice the typical speed in the view,
+// rounded down to a band edge, so that it matches the |V| scale. At least -1, at most 24 bands.
+struct PressureScale {
+    double lowest = -3.0;
+    int bands = 16;
+};
+
+PressureScale pressureScale(double typicalSpeed, double freeStreamSpeed) {
+    const double raw = std::clamp(pressureCoefficient(k_speedScaleFactor * typicalSpeed, freeStreamSpeed), -23.0, -1.0);
+    const double step = raw >= -5.0 ? 0.25 : raw >= -11.0 ? 0.5 : 1.0;
+    const double lowest = std::floor(raw / step) * step;
+    return {lowest, static_cast<int>(std::lround((1.0 - lowest) / step))};
 }
 
 // Actions that throw away the current scene, so they may need confirmation first.
@@ -130,9 +147,11 @@ private:
     void exportImage();
     void exportField();
     void exportLines();
+    void exportSurface();
     bool writePlotImage(const std::filesystem::path& path, std::string& error) const;
     bool writeFieldCsv(const std::filesystem::path& path, std::string& error) const;
     bool writeLinesCsv(const std::filesystem::path& path, std::string& error) const;
+    bool writeSurfaceCsv(const std::filesystem::path& path, std::string& error) const;
     void captureIfDue();
     void runBatchStep();
 
@@ -160,6 +179,8 @@ private:
 
     // UI state.
     PlotView m_plotView;
+    SurfacePanel m_surfacePanel;
+    std::optional<Vec2> m_surfaceMarker; // surface point picked in the Cp panel (last frame)
     ParameterDialog m_dialog;
     PlotViewResult m_plot; // plot geometry from the latest frame
     ImVec2 m_plotWindowPos{0.0f, 0.0f};  // the plot window (axes included), for image export
@@ -168,11 +189,13 @@ private:
     bool m_confirmDiscard = false;
     bool m_quitConfirmed = false;
 
-    // Streamlines, equipotentials and speed contours, recomputed when the flow, the view or the plot
-    // settings change.
+    // Streamlines, equipotentials, contours and body surfaces, recomputed when the flow, the view or
+    // the plot settings change.
     StreamlineSet m_streamlines;
     StreamlineSet m_equipotentials;
-    SpeedMap m_speedMap;
+    ContourMap m_contours;
+    std::vector<BodySurface> m_surfaces;
+    double m_lowestCp = -3.0; // bottom of the Cp colour scale
     std::optional<Rect> m_streamlineView;
     bool m_streamlinesDirty = true;
 
@@ -396,14 +419,25 @@ void App::frame(double dt) {
         m_dialog.openNew(defaultElement(*kind, newElementPosition(m_scene.plot.view)));
     }
 
-    PlotLayers layers{.streamlines = m_streamlines, .equipotentials = m_equipotentials, .speed = m_speedMap, .particles = {}};
+    PlotLayers layers{.streamlines = m_streamlines,
+                      .equipotentials = m_equipotentials,
+                      .contours = m_contours,
+                      .surfaces = {.bodies = m_surfaces, .lowestCp = m_lowestCp, .marker = m_surfaceMarker},
+                      .particles = {}};
     if (particlesVisible() && m_trailRenderer->texture() != 0) {
         layers.particles.texture = static_cast<ImTextureID>(m_trailRenderer->texture());
         layers.particles.beginBlend = premultipliedBlend;
     }
+    const bool surfacePanel = m_scene.plot.showSurfacePressure;
+    const float panelWidth = surfacePanel ? surfacePanelWidth(workSize.x - toolWidth) : 0.0f;
     m_plotWindowPos = ImVec2(workPos.x + toolWidth, workPos.y);
-    m_plotWindowSize = ImVec2(workSize.x - toolWidth, bodyHeight);
+    m_plotWindowSize = ImVec2(std::max(workSize.x - toolWidth - panelWidth, 1.0f), bodyHeight);
     m_plot = m_plotView.draw(m_plotWindowPos, m_plotWindowSize, m_scene, m_model, layers);
+    m_surfaceMarker.reset();
+    if (surfacePanel) {
+        m_surfaceMarker = m_surfacePanel.draw(ImVec2(m_plotWindowPos.x + m_plotWindowSize.x, workPos.y),
+                                              ImVec2(panelWidth, bodyHeight), m_surfaces, m_model);
+    }
     m_scene.plot.view = m_plot.limits; // panning and zooming are saved with the scene, but are not "edits"
     if (m_plot.editRequest) m_dialog.openEdit(*m_plot.editRequest, m_scene.elements[*m_plot.editRequest]);
 
@@ -450,6 +484,7 @@ void App::handleMenu(const MainMenuActions& actions) {
     if (actions.exportImage) exportImage();
     if (actions.exportField) exportField();
     if (actions.exportLines) exportLines();
+    if (actions.exportSurface) exportSurface();
     if (actions.reloadShaders) reloadShaders();
     if (actions.resetView) m_plotView.setView(PlotSettings{}.view);
     if (actions.plotChanged) {
@@ -566,7 +601,8 @@ void App::updateStreamlines() {
     m_referenceSpeed = typicalSpeed(m_model.field, view);
     m_streamlines = {};
     m_equipotentials = {};
-    m_speedMap = {};
+    m_contours = {};
+    m_surfaces.clear();
     if (!m_model.field.elements.empty()) {
         const double worldPerPixel = view.size().x / m_plot.pixelSize.x;
         StreamlineSettings settings;
@@ -583,13 +619,29 @@ void App::updateStreamlines() {
             settings.arrowSpacing = 0.0;
             m_equipotentials = computeStreamlines(m_model.field, settings);
         }
-        if (m_scene.plot.showSpeedContours && m_referenceSpeed > 0.0) {
+        const double freeStream = m_model.freeStreamSpeed;
+        const PressureScale pressure = freeStream > 0.0 ? pressureScale(m_referenceSpeed, freeStream) : PressureScale{};
+        m_lowestCp = pressure.lowest;
+        m_contours.quantity = m_scene.plot.background;
+        const bool speed = m_contours.quantity == Background::Speed;
+        const bool cp = m_contours.quantity == Background::PressureCoefficient && freeStream > 0.0;
+        if ((speed || cp) && m_referenceSpeed > 0.0) {
             const float cell = k_speedCellPx * uiScale();
             const int columns = static_cast<int>(std::ceil(m_plot.pixelSize.x / cell));
             const int rows = static_cast<int>(std::ceil(m_plot.pixelSize.y / cell));
-            m_speedMap.speed = sampleSpeed(m_model.field, view, columns, rows, settings.singularRadius);
-            m_speedMap.maxSpeed = k_speedScaleFactor * m_referenceSpeed;
+            m_contours.values = sampleSpeed(m_model.field, view, columns, rows, settings.singularRadius);
+            if (speed) {
+                m_contours.high = k_speedScaleFactor * m_referenceSpeed;
+                m_contours.bands = k_speedBands;
+            } else {
+                // Bernoulli: NaN outside the domain stays NaN, infinite speed gives Cp = -infinity.
+                for (double& value : m_contours.values.values) value = pressureCoefficient(value, freeStream);
+                m_contours.low = pressure.lowest;
+                m_contours.high = 1.0;
+                m_contours.bands = pressure.bands;
+            }
         }
+        if (m_scene.plot.showSurfacePressure) m_surfaces = findBodySurfaces(m_model, view);
     }
     m_streamlineView = view;
     m_streamlinesDirty = false;
@@ -657,6 +709,12 @@ void App::exportLines() {
     if (path && !writeLinesCsv(*path, error)) showErrorMessage(m_window, "Could not export lines", error);
 }
 
+void App::exportSurface() {
+    const std::optional<std::filesystem::path> path = showSaveCsvDialog(m_window, suggestedExportPath("_surface.csv"));
+    std::string error;
+    if (path && !writeSurfaceCsv(*path, error)) showErrorMessage(m_window, "Could not export surface Cp", error);
+}
+
 bool App::writePlotImage(const std::filesystem::path& path, std::string& error) const {
     int fbWidth = 0;
     int fbHeight = 0;
@@ -696,6 +754,19 @@ bool App::writeLinesCsv(const std::filesystem::path& path, std::string& error) c
     return writeTextFile(path, linesCsv(m_streamlines, m_equipotentials), error);
 }
 
+bool App::writeSurfaceCsv(const std::filesystem::path& path, std::string& error) const {
+    if (!(m_model.freeStreamSpeed > 0.0)) {
+        error = "Surface Cp needs a free stream: add a uniform flow.";
+        return false;
+    }
+    const std::vector<BodySurface> bodies = findBodySurfaces(m_model, m_plot.limits);
+    if (bodies.empty()) {
+        error = "No body surface was found in the flow.";
+        return false;
+    }
+    return writeTextFile(path, surfaceCsv(bodies, m_model), error);
+}
+
 void App::captureIfDue() {
     if (!m_imageCapture || --m_imageCapture->framesLeft > 0) return;
     std::string error;
@@ -714,6 +785,7 @@ void App::runBatchStep() {
     run(m_commandLine.exportImage, "the image", &App::writePlotImage);
     run(m_commandLine.exportField, "field data", &App::writeFieldCsv);
     run(m_commandLine.exportLines, "lines", &App::writeLinesCsv);
+    run(m_commandLine.exportSurface, "surface Cp", &App::writeSurfaceCsv);
     m_quitConfirmed = true;
     glfwSetWindowShouldClose(m_window, GLFW_TRUE);
 }
@@ -731,9 +803,7 @@ StatusInfo App::statusInfo() const {
         if (probe.inDomain) {
             probe.velocity = field.velocity(probe.position);
             if (m_model.freeStreamSpeed > 0.0) {
-                // Bernoulli with the free stream as reference: Cp = 1 - |V|^2 / U^2.
-                const double ratio = length(probe.velocity) / m_model.freeStreamSpeed;
-                probe.pressureCoefficient = 1.0 - ratio * ratio;
+                probe.pressureCoefficient = pressureCoefficient(length(probe.velocity), m_model.freeStreamSpeed);
             }
         }
         info.probe = probe;

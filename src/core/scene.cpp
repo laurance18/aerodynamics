@@ -120,6 +120,7 @@ FlowModel buildFlowModel(const Scene& scene) {
         }
     }
     model.field.elements.insert(model.field.elements.end(), model.images.begin(), model.images.end());
+    model.freeStream = velocityFromW(freeStream);
     model.freeStreamSpeed = std::abs(freeStream);
     return model;
 }

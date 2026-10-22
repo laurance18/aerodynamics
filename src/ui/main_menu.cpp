@@ -32,8 +32,20 @@ void drawViewMenu(PlotSettings& plot, MainMenuActions& actions) {
     ImGui::SetItemTooltip("Draw the mirrored sources, vortices and doublets that enforce the symmetry walls.");
     actions.plotChanged |= ImGui::Checkbox("Equipotential lines", &plot.showEquipotentials);
     ImGui::SetItemTooltip("Lines of constant velocity potential φ, crossing every streamline at right angles.");
-    actions.plotChanged |= ImGui::Checkbox("Speed contours |V|", &plot.showSpeedContours);
-    ImGui::SetItemTooltip("Filled bands of velocity magnitude, from 0 to twice the typical speed in the view.");
+    int background = static_cast<int>(plot.background);
+    ImGui::SetNextItemWidth(180.0f * uiScale());
+    if (ImGui::Combo("Background", &background, "None\0Speed contours |V|\0Pressure coefficient Cp\0")) {
+        plot.background = static_cast<Background>(background);
+        actions.plotChanged = true;
+    }
+    ImGui::SetItemTooltip("Filled bands under the streamlines:\n"
+                          "|V| from 0 to twice the typical speed in the view, or\n"
+                          "Cp = 1 - |V|²/V∞² (Bernoulli, free stream as reference): red above and blue below\n"
+                          "the free-stream pressure. Cp needs a uniform flow.");
+    actions.plotChanged |= ImGui::Checkbox("Surface pressure", &plot.showSurfacePressure);
+    ImGui::SetItemTooltip("Find the bodies (closed or half-bodies bounded by dividing streamlines), colour their\n"
+                          "surfaces by Cp with pressure arrows, and open the panel with Cp along the surface\n"
+                          "and the integrated lift and drag.");
     actions.plotChanged |= ImGui::Checkbox("Tracer particles", &plot.showParticles);
     ImGui::BeginDisabled(!plot.showParticles);
     actions.plotChanged |= ImGui::Checkbox("Particle trails", &plot.particleTrails);
@@ -67,6 +79,9 @@ MainMenuActions drawMainMenu(const Scene& scene, PlotSettings& plot, bool canRel
             ImGui::SetItemTooltip("x, y, u, v, |V|, φ, ψ and Cp on a 201-column grid over the current view.");
             if (ImGui::MenuItem("Export lines (CSV)...", nullptr, false, hasFlow)) actions.exportLines = true;
             ImGui::SetItemTooltip("The points of every streamline and equipotential line shown now.");
+            if (ImGui::MenuItem("Export surface Cp (CSV)...", nullptr, false, hasFlow)) actions.exportSurface = true;
+            ImGui::SetItemTooltip("x, y, arc length, x/c, angle and Cp (and the exact Cp for a cylinder) at every\n"
+                                  "point of every body surface found in the flow.");
             ImGui::Separator();
             if (ImGui::MenuItem("Clear All", nullptr, false, !scene.elements.empty())) actions.clearAll = true;
             ImGui::SetItemTooltip("Remove every element but keep the view and plot settings.");

@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <numbers>
@@ -74,6 +76,16 @@ SceneElement elementFromJson(const json& j) {
     throw std::runtime_error("unknown element type \"" + type + "\"");
 }
 
+constexpr std::array<std::pair<Background, const char*>, 3> k_backgrounds = {
+    {{Background::None, "none"}, {Background::Speed, "speed"}, {Background::PressureCoefficient, "cp"}}};
+
+const char* backgroundName(Background background) {
+    for (const auto& [value, name] : k_backgrounds) {
+        if (value == background) return name;
+    }
+    return "none";
+}
+
 json plotToJson(const PlotSettings& p) {
     return {{"x_min", p.view.min.x},
             {"x_max", p.view.max.x},
@@ -84,7 +96,8 @@ json plotToJson(const PlotSettings& p) {
             {"arrow_spacing_px", p.arrowSpacingPx},
             {"show_images", p.showImages},
             {"equipotentials", p.showEquipotentials},
-            {"speed_contours", p.showSpeedContours},
+            {"background", backgroundName(p.background)},
+            {"surface_pressure", p.showSurfacePressure},
             {"particles", p.showParticles},
             {"particle_trails", p.particleTrails}};
 }
@@ -101,7 +114,14 @@ PlotSettings plotFromJson(const json& j) {
     p.arrowSpacingPx = j.value("arrow_spacing_px", p.arrowSpacingPx);
     p.showImages = j.value("show_images", p.showImages);
     p.showEquipotentials = j.value("equipotentials", p.showEquipotentials);
-    p.showSpeedContours = j.value("speed_contours", p.showSpeedContours);
+    if (j.value("speed_contours", false)) p.background = Background::Speed; // before "background" existed
+    if (j.contains("background")) {
+        const std::string name = j.at("background").get<std::string>();
+        const auto known = std::ranges::find(k_backgrounds, name, [](const auto& entry) { return std::string(entry.second); });
+        if (known == k_backgrounds.end()) throw std::runtime_error("unknown background \"" + name + "\"");
+        p.background = known->first;
+    }
+    p.showSurfacePressure = j.value("surface_pressure", p.showSurfacePressure);
     p.showParticles = j.value("particles", p.showParticles);
     p.particleTrails = j.value("particle_trails", p.particleTrails);
     return p;

@@ -89,6 +89,7 @@ CommandLine parseCommandLine() {
         if (arg == L"--export-image") target = &result.exportImage;
         if (arg == L"--export-field") target = &result.exportField;
         if (arg == L"--export-lines") target = &result.exportLines;
+        if (arg == L"--export-surface") target = &result.exportSurface;
 
         if (target != nullptr) {
             if (i + 1 < count) {
@@ -99,7 +100,7 @@ CommandLine parseCommandLine() {
         } else if (arg.starts_with(L"--")) {
             result.error = "Unknown option " + std::filesystem::path(arg).string() +
                            ".\n\nUsage: PotentialFlowLab.exe [scene.json] [--export-image out.png] "
-                           "[--export-field out.csv] [--export-lines out.csv]";
+                           "[--export-field out.csv] [--export-lines out.csv] [--export-surface out.csv]";
         } else if (!result.scene) {
             result.scene = std::filesystem::path(arg);
         }

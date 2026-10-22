@@ -12,9 +12,13 @@ equipotential lines and velocity-magnitude contours, and animates tracer particl
 - **Elements** menu: every element with its parameters, each with Edit and Delete.
 - **File** menu: New, Open, Save, Save As (JSON scenes, see `examples/`), Clear All, and exports:
   PNG image of the plot, CSV field data (u, v, |V|, φ, ψ, Cp on a grid), CSV streamline and
-  equipotential polylines. The exports also run from the command line.
-- **View** menu: streamline density, arrows, wall images, equipotential lines, speed contours,
-  tracer particles.
+  equipotential polylines, CSV surface Cp of the bodies. The exports also run from the command line.
+- **View** menu: streamline density, arrows, wall images, equipotential lines, a |V| or Cp
+  background, surface pressure, tracer particles.
+- **Surface pressure**: the bodies (cylinder, Rankine oval, half-body, ...) are found from their
+  stagnation points; their surfaces are coloured by Cp with pressure arrows, and a side panel plots
+  Cp along the surface (exact curve for a cylinder) with the integrated lift and drag compared with
+  Kutta–Joukowski and d'Alembert.
 - Status bar: velocity and Cp under the mouse, the numerical wall check, and warnings.
 
 See [docs/user_guide.md](docs/user_guide.md) for usage, [docs/report.md](docs/report.md) for the

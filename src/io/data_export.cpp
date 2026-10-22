@@ -68,6 +68,28 @@ std::string linesCsv(const StreamlineSet& streamlines, const StreamlineSet& equi
     return out;
 }
 
+std::string surfaceCsv(const std::vector<BodySurface>& bodies, const FlowModel& model) {
+    const double nan = std::nan("");
+    std::string out = "body,closed,x,y,s,streamwise,theta_deg,cp,cp_exact\n";
+    for (std::size_t b = 0; b < bodies.size(); ++b) {
+        const BodySurface& body = bodies[b];
+        const std::optional<CylinderReference> cylinder = cylinderReference(body, model);
+        for (std::size_t k = 0; k < body.points.size(); ++k) {
+            const Vec2 p = body.points[k];
+            double exact = nan;
+            if (cylinder) exact = cylinder->cp(std::atan2(p.y - cylinder->centre.y, p.x - cylinder->centre.x));
+            std::format_to(std::back_inserter(out), "{},{},", b + 1, body.closed ? 1 : 0);
+            for (const double value : {p.x, p.y, body.arcLength[k], body.streamwise[k],
+                                       body.closed ? body.angle[k] : nan, body.cp[k], exact}) {
+                appendNumber(out, value);
+                out += ',';
+            }
+            out.back() = '\n';
+        }
+    }
+    return out;
+}
+
 bool writeTextFile(const std::filesystem::path& path, std::string_view text, std::string& error) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (file) file.write(text.data(), static_cast<std::streamsize>(text.size()));

@@ -12,6 +12,10 @@ number in docs/report.md comes from the program itself:
    independently of the program's complex-potential code. A Markdown table of the errors is
    printed and written to docs/figures/validation.md.
 3. docs/figures/cylinder_cp.png: Cp along the y axis above the cylinder, program vs. exact.
+4. Surface pressure: the surface Cp export of the closed bodies is compared with the exact cylinder
+   solution and integrated (F / q = -sum Cp n ds) for drag and lift, which an isolated body must
+   have equal to 0 (d'Alembert) and 2 Gamma / V (Kutta-Joukowski). A second table is appended to
+   docs/figures/validation.md, and docs/figures/surface_cp.png plots Cp around both cylinders.
 
 Needs numpy and matplotlib. The exe opens its window briefly for every export.
 """
@@ -32,10 +36,11 @@ EXAMPLES = ROOT / "examples"
 FIGURES = {
     "uniform_45deg": ("uniform_45deg", {}),
     "source_sink_vortex": ("source_sink_vortex", {"equipotentials": True}),
-    "cylinder": ("cylinder", {"speed_contours": True}),
+    "cylinder": ("cylinder", {"background": "speed"}),
     "lifting_cylinder": ("lifting_cylinder", {"equipotentials": True}),
+    "lifting_cylinder_pressure": ("lifting_cylinder", {"background": "cp", "surface_pressure": True}),
     "source_near_wall": ("source_near_wall", {"show_images": True}),
-    "rankine_oval": ("rankine_oval", {"speed_contours": True}),
+    "rankine_oval": ("rankine_oval", {"background": "speed"}),
     "corner_flow_90deg": ("corner_flow_90deg", {"equipotentials": True}),
     "flat_plate_edge": ("flat_plate_edge", {}),
 }
@@ -179,6 +184,60 @@ def cp_figure(fields, out):
     plt.close(fig)
 
 
+# name -> (description, V_inf, enclosed Gamma)
+SURFACES = {
+    "cylinder": ("Cylinder, a = 1", 1.0, 0.0),
+    "lifting_cylinder": ("Lifting cylinder, Γ = 2π", 1.0, TWO_PI),
+    "rankine_oval": ("Rankine oval", 1.0, 0.0),
+}
+
+
+def surface_forces(body):
+    """F / q_inf = -sum Cp n ds over the clockwise surface polygon (n ds = perp(d) outward)."""
+    x, y, cp = body["x"], body["y"], body["cp"]
+    dx, dy = np.diff(x), np.diff(y)
+    cp_mid = 0.5 * (cp[1:] + cp[:-1])
+    fx, fy = -np.sum(cp_mid * -dy), -np.sum(cp_mid * dx)
+    return fx, fy  # free stream along +x in these examples: drag = fx, lift = fy
+
+
+def surface_figure(surfaces, out):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    surface, ink, ink2, grid = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
+    series = [("cylinder", "Γ = 0", "#2a78d6"), ("lifting_cylinder", "Γ = 2π", "#eb6834")]
+
+    fig, ax = plt.subplots(figsize=(6.4, 3.6), dpi=160, facecolor=surface)
+    ax.set_facecolor(surface)
+    for name, label, colour in series:
+        b = surfaces[name]
+        order = np.argsort(b["theta_deg"])
+        theta, cp, exact = b["theta_deg"][order], b["cp"][order], b["cp_exact"][order]
+        ax.plot(theta, exact, color=colour, linewidth=2, label=f"{label}, exact", zorder=2)
+        step = max(len(theta) // 36, 1)
+        ax.plot(theta[::step], cp[::step], linestyle="none", marker="o", markersize=5, markerfacecolor=colour,
+                markeredgecolor=surface, markeredgewidth=1.5, label=f"{label}, program", zorder=3)
+    ax.invert_yaxis()  # suction up
+    ax.set_xticks([0, 90, 180, 270, 360])
+    ax.set_xlim(0, 360)
+    ax.set_xlabel("θ  (angle around the cylinder from the free-stream direction, °)", color=ink2, fontsize=9)
+    ax.set_ylabel("Surface pressure coefficient Cp", color=ink2, fontsize=9)
+    ax.set_title("Cp on the cylinder surface: program vs. exact solution", color=ink, fontsize=10, loc="left")
+    ax.grid(True, color=grid, linewidth=0.8)
+    ax.tick_params(colors=ink2, labelsize=8)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(grid)
+    ax.legend(frameon=False, fontsize=8, labelcolor=ink2, loc="upper right")
+    fig.tight_layout()
+    fig.savefig(out, facecolor=surface)
+    plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--exe", type=Path, default=ROOT / "build/msvc/bin/Release/PotentialFlowLab.exe")
@@ -203,10 +262,26 @@ def main():
         defined, masked, error = validate(fields[name], exact)
         rows.append(f"| {description} | {defined} | {masked} | {error:.1e} |")
     table = "\n".join(rows)
+
+    surfaces = {}
+    rows = ["| Body | Surface points | Max. abs. Cp error (exact cylinder) | D'/q∞ | L'/q∞ | Exact L'/q∞ = 2Γ/V∞ |",
+            "|---|---:|---:|---:|---:|---:|"]
+    for name, (description, speed, circulation) in SURFACES.items():
+        csv = args.work / f"{name}_surface.csv"
+        run_exe(args.exe, scene_variant(name, {}, args.work), surface=csv)
+        data = load_field(csv)
+        body = {key: values[data["body"] == 1] for key, values in data.items()}
+        surfaces[name] = body
+        drag, lift = surface_forces(body)
+        error = np.max(np.abs(body["cp"] - body["cp_exact"])) if np.isfinite(body["cp_exact"]).all() else None
+        rows.append(f"| {description} | {len(body['x'])} | {'–' if error is None else f'{error:.1e}'} | "
+                    f"{drag:.1e} | {lift:.5f} | {2 * circulation / speed:.5f} |".replace("-0.00000", "0.00000"))
+    table += "\n\n" + "\n".join(rows)
     print(table)
     (args.out / "validation.md").write_text(table + "\n", encoding="utf-8")
 
     cp_figure(fields, args.out / "cylinder_cp.png")
+    surface_figure(surfaces, args.out / "surface_cp.png")
     print(f"figures written to {args.out}")
 
 

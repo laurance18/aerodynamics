@@ -6,6 +6,8 @@
 
 #include <imgui.h>
 
+#include <array>
+
 namespace pfl {
 
 inline constexpr ImU32 k_sourceColor = IM_COL32(95, 205, 120, 255);
@@ -15,6 +17,16 @@ inline constexpr ImU32 k_doubletColor = IM_COL32(195, 140, 245, 255);
 inline constexpr ImU32 k_sectorColor = IM_COL32(90, 205, 225, 255);
 inline constexpr ImU32 k_wallColor = IM_COL32(235, 235, 235, 255);
 inline constexpr ImU32 k_uniformColor = IM_COL32(235, 235, 235, 255);
+
+// Bodies in the surface-pressure panel, in this fixed order (identity, not rank).
+inline constexpr std::array<ImU32, 8> k_bodyColors = {
+    IM_COL32(57, 135, 229, 255), IM_COL32(217, 89, 38, 255),  IM_COL32(25, 158, 112, 255), IM_COL32(201, 133, 0, 255),
+    IM_COL32(213, 81, 129, 255), IM_COL32(0, 131, 0, 255),    IM_COL32(144, 133, 233, 255), IM_COL32(230, 103, 103, 255)};
+
+// Diverging colour for a pressure coefficient: a neutral grey at Cp = 0 (free-stream pressure),
+// red towards Cp = 1 (stagnation) and blue towards `lowest` (< 0, the strongest suction shown).
+// Values beyond either end take the end colour.
+ImU32 pressureColor(double cp, double lowest, float alpha = 1.0f);
 
 // DPI scale of the UI (1 at 96 dpi).
 inline float uiScale() { return ImGui::GetStyle().FontScaleDpi; }

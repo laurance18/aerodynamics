@@ -21,11 +21,12 @@ constexpr ImU32 k_particleTint = IM_COL32(115, 115, 115, 115);
 constexpr ImU32 k_maskColor = IM_COL32(0, 0, 0, 120);
 constexpr ImU32 k_hintColor = IM_COL32(200, 200, 210, 160);
 constexpr ImU32 k_highlightColor = IM_COL32(255, 255, 255, 230);
+constexpr ImU32 k_surfaceCasingColor = IM_COL32(235, 235, 235, 235);
 constexpr float k_imageAlpha = 0.35f;
 constexpr float k_maskCellPx = 6.0f;
 constexpr float k_hitRadiusPx = 10.0f;
-constexpr int k_speedBands = 10;
 constexpr float k_speedAlpha = 0.6f;
+constexpr float k_pressureAlpha = 0.75f;
 
 ImVec2 toPixels(Vec2 p) { return ImPlot::PlotToPixels(p.x, p.y); }
 
@@ -71,26 +72,30 @@ void drawMask(ImDrawList* dl, const FlowField& field, ImVec2 pos, ImVec2 size) {
     }
 }
 
-// Colour of speed band `band` (0 slowest) on the Viridis scale.
-ImU32 speedBandColor(int band) {
-    ImVec4 c = ImPlot::SampleColormap((band + 0.5f) / k_speedBands, ImPlotColormap_Viridis);
-    c.w = k_speedAlpha;
-    return ImGui::ColorConvertFloat4ToU32(c);
+// Colour of band `band` (0 lowest): Viridis for |V|, the diverging pressure scale for Cp.
+ImU32 bandColor(const ContourMap& map, int band, float alpha) {
+    if (map.quantity == Background::Speed) {
+        ImVec4 c = ImPlot::SampleColormap((band + 0.5f) / map.bands, ImPlotColormap_Viridis);
+        c.w = alpha;
+        return ImGui::ColorConvertFloat4ToU32(c);
+    }
+    return pressureColor(map.low + (band + 0.5) * (map.high - map.low) / map.bands, map.low, alpha);
 }
 
-// Filled |V| bands. Cells in the same band are merged into horizontal runs.
-void drawSpeedBands(ImDrawList* dl, const SpeedMap& map) {
-    const ScalarGrid& grid = map.speed;
-    if (map.maxSpeed <= 0.0 || grid.columns <= 0 || grid.rows <= 0) return;
+// Filled bands. Cells in the same band are merged into horizontal runs.
+void drawContourBands(ImDrawList* dl, const ContourMap& map) {
+    const ScalarGrid& grid = map.values;
+    if (map.quantity == Background::None || map.bands <= 0 || grid.columns <= 0 || grid.rows <= 0) return;
+    const float alpha = map.quantity == Background::Speed ? k_speedAlpha : k_pressureAlpha;
     const Vec2 cell{grid.bounds.size().x / grid.columns, grid.bounds.size().y / grid.rows};
     std::vector<float> xs(static_cast<std::size_t>(grid.columns) + 1);
     for (int i = 0; i <= grid.columns; ++i) xs[static_cast<std::size_t>(i)] = toPixels(grid.bounds.min + Vec2{cell.x * i, 0.0}).x;
 
     const auto bandOf = [&](int i, int j) {
-        const double speed = grid.at(i, j);
-        if (std::isnan(speed)) return -1; // outside the domain: the mask covers it
-        // Clamp before converting: the speed is +infinity at singular points.
-        return static_cast<int>(std::clamp(speed / map.maxSpeed * k_speedBands, 0.0, k_speedBands - 0.5));
+        const double value = grid.at(i, j);
+        if (std::isnan(value)) return -1; // outside the domain: the mask covers it
+        // Clamp before converting: the value is infinite at singular points.
+        return static_cast<int>(std::clamp((value - map.low) / (map.high - map.low) * map.bands, 0.0, map.bands - 0.5));
     };
     for (int j = 0; j < grid.rows; ++j) {
         const float yBottom = toPixels(grid.bounds.min + Vec2{0.0, cell.y * j}).y;
@@ -102,7 +107,7 @@ void drawSpeedBands(ImDrawList* dl, const SpeedMap& map) {
             if (band == runBand) continue;
             if (runBand >= 0) {
                 dl->AddRectFilled({xs[static_cast<std::size_t>(runStart)], yTop}, {xs[static_cast<std::size_t>(i)], yBottom},
-                                  speedBandColor(runBand));
+                                  bandColor(map, runBand, alpha));
             }
             runStart = i;
             runBand = band;
@@ -110,33 +115,124 @@ void drawSpeedBands(ImDrawList* dl, const SpeedMap& map) {
     }
 }
 
-// Colour scale for the |V| bands in the top-right corner of the plot.
-void drawSpeedScale(ImDrawList* dl, const SpeedMap& map, ImVec2 plotPos, ImVec2 plotSize) {
-    if (map.maxSpeed <= 0.0) return;
+// Colour scale for the bands in the top-right corner of the plot.
+void drawContourScale(ImDrawList* dl, const ContourMap& map, ImVec2 plotPos, ImVec2 plotSize) {
+    if (map.quantity == Background::None) return;
     const float s = uiScale();
-    const float barWidth = 14.0f * s;
-    const float bandHeight = 16.0f * s;
     const float font = ImGui::GetFontSize();
-    const std::string top = std::format("≥ {:.3g}", map.maxSpeed);
-    const float labelWidth = ImGui::CalcTextSize(top.c_str()).x;
-    const ImVec2 boxMax = plotPos + ImVec2(plotSize.x - 10.0f * s, 14.0f * s + 2.5f * font + k_speedBands * bandHeight);
+    const bool speed = map.quantity == Background::Speed;
+    if (map.bands <= 0) {
+        if (speed) return;
+        const char* note = "Cp needs a free stream: add a uniform flow.";
+        const ImVec2 textSize = ImGui::CalcTextSize(note);
+        const ImVec2 boxMax = plotPos + ImVec2(plotSize.x - 10.0f * s, 10.0f * s + textSize.y + 8.0f * s);
+        const ImVec2 boxMin{boxMax.x - textSize.x - 16.0f * s, plotPos.y + 10.0f * s};
+        dl->AddRectFilled(boxMin, boxMax, IM_COL32(15, 17, 24, 190), 4.0f * s);
+        dl->AddText(boxMin + ImVec2(8.0f * s, 4.0f * s), k_hintColor, note);
+        return;
+    }
+
+    std::vector<std::pair<double, std::string>> labels;
+    if (speed) {
+        const double middle = 0.5 * (map.low + map.high);
+        labels = {{map.low, "0"}, {middle, std::format("{:.3g}", middle)}, {map.high, std::format("≥ {:.3g}", map.high)}};
+    } else {
+        labels = {{map.low, std::format("≤ {:.3g}", map.low)}, {0.0, "0"}, {map.high, std::format("{:.3g}", map.high)}};
+    }
+    float labelWidth = 0.0f;
+    for (const auto& [value, text] : labels) labelWidth = std::max(labelWidth, ImGui::CalcTextSize(text.c_str()).x);
+
+    const float barWidth = 14.0f * s;
+    const float bandHeight = std::min(16.0f, 160.0f / static_cast<float>(map.bands)) * s;
+    const float barHeight = static_cast<float>(map.bands) * bandHeight;
+    const ImVec2 boxMax = plotPos + ImVec2(plotSize.x - 10.0f * s, 14.0f * s + 2.5f * font + barHeight);
     const ImVec2 boxMin = ImVec2(boxMax.x - (barWidth + labelWidth + 22.0f * s), plotPos.y + 10.0f * s);
     dl->AddRectFilled(boxMin, boxMax, IM_COL32(15, 17, 24, 190), 4.0f * s);
-    dl->AddText(boxMin + ImVec2(8.0f * s, 4.0f * s), k_hintColor, "|V|");
+    dl->AddText(boxMin + ImVec2(8.0f * s, 4.0f * s), k_hintColor, speed ? "|V|" : "Cp");
 
     const float barX = boxMin.x + 8.0f * s;
     const float barBottom = boxMax.y - 0.5f * font - 4.0f * s;
-    for (int band = 0; band < k_speedBands; ++band) {
-        const float y1 = barBottom - band * bandHeight;
-        ImVec4 c = ImPlot::SampleColormap((band + 0.5f) / k_speedBands, ImPlotColormap_Viridis);
-        dl->AddRectFilled({barX, y1 - bandHeight}, {barX + barWidth, y1}, ImGui::ColorConvertFloat4ToU32(c));
+    for (int band = 0; band < map.bands; ++band) {
+        const float y1 = barBottom - static_cast<float>(band) * bandHeight;
+        dl->AddRectFilled({barX, y1 - bandHeight}, {barX + barWidth, y1}, bandColor(map, band, 1.0f));
     }
-    const auto label = [&](float y, const std::string& text) {
+    for (const auto& [value, text] : labels) {
+        const float y = barBottom - static_cast<float>((value - map.low) / (map.high - map.low)) * barHeight;
         dl->AddText({barX + barWidth + 6.0f * s, y - 0.5f * font}, k_hintColor, text.c_str());
-    };
-    label(barBottom, "0");
-    label(barBottom - 0.5f * k_speedBands * bandHeight, std::format("{:.3g}", 0.5 * map.maxSpeed));
-    label(barBottom - k_speedBands * bandHeight, top);
+    }
+}
+
+// Body surfaces coloured by Cp, with arrows normal to the surface: towards it where Cp > 0
+// (pressure above the free-stream value pushes on the body) and away from it where Cp < 0 (suction).
+// Arrow length is proportional to |Cp|, the largest |Cp| on any body getting the longest arrow.
+void drawSurfaces(ImDrawList* dl, const SurfaceLayer& layer) {
+    const float s = uiScale();
+    const float minGap = 2.0f * s;        // drawn vertices at least this far apart
+    const float arrowSpacing = 24.0f * s; // along the surface
+    const float maxArrow = 48.0f * s;
+    double largest = 0.0;
+    for (const BodySurface& body : layer.bodies) {
+        for (const double cp : body.cp) largest = std::max(largest, std::abs(cp));
+    }
+    const float pixelsPerCp = largest > 0.0 ? maxArrow / static_cast<float>(largest) : 0.0f;
+    std::vector<std::size_t> kept;
+    std::vector<ImVec2> pixels;
+    for (std::size_t b = 0; b < layer.bodies.size(); ++b) {
+        const BodySurface& body = layer.bodies[b];
+        if (body.points.size() < 2) continue;
+        kept.assign(1, 0);
+        pixels.assign(1, toPixels(body.points.front()));
+        for (std::size_t k = 1; k < body.points.size(); ++k) {
+            const ImVec2 p = toPixels(body.points[k]);
+            const ImVec2 d = p - pixels.back();
+            if (d.x * d.x + d.y * d.y < minGap * minGap && k + 1 < body.points.size()) continue;
+            kept.push_back(k);
+            pixels.push_back(p);
+        }
+
+        // A light casing keeps the surface visible on the Cp bands, which share its colours.
+        dl->AddPolyline(pixels.data(), static_cast<int>(pixels.size()), k_surfaceCasingColor, ImDrawFlags_None, 6.5f * s);
+        float along = 0.5f * arrowSpacing;
+        for (std::size_t i = 0; i + 1 < kept.size(); ++i) {
+            const double cp = 0.5 * (body.cp[kept[i]] + body.cp[kept[i + 1]]);
+            const ImU32 colour = pressureColor(cp, layer.lowestCp);
+            dl->AddLine(pixels[i], pixels[i + 1], colour, 3.5f * s);
+
+            const ImVec2 d = pixels[i + 1] - pixels[i];
+            along += std::sqrt(d.x * d.x + d.y * d.y);
+            if (along < arrowSpacing) continue;
+            along = 0.0f;
+            const float size = static_cast<float>(std::abs(cp)) * pixelsPerCp;
+            if (size < 4.0f * s) continue;
+            // perp of the world direction is the outward normal; screen y points down.
+            const Vec2 n = perp(body.points[kept[i + 1]] - body.points[kept[i]]);
+            const ImVec2 out = normalized({static_cast<float>(n.x), static_cast<float>(-n.y)});
+            const ImVec2 base = pixels[i] + out * (3.0f * s);
+            const ImVec2 tip = cp > 0.0 ? base : base + out * size;
+            const ImVec2 tail = cp > 0.0 ? base + out * size : base;
+            const ImVec2 dir = cp > 0.0 ? out * -1.0f : out;
+            // Full red or blue: the length shows the magnitude.
+            const ImU32 arrowColour = pressureColor(cp > 0.0 ? 1.0 : layer.lowestCp, layer.lowestCp);
+            dl->AddLine(tail, tip - dir * (4.0f * s), arrowColour, 1.5f * s);
+            drawArrowHead(dl, tip, dir, 6.0f * s, arrowColour);
+        }
+
+        if (layer.bodies.size() > 1) {
+            // Number the bodies (as in the Cp panel) above their highest point.
+            const ImVec2 top = *std::ranges::min_element(pixels, {}, &ImVec2::y);
+            const std::string label = std::to_string(b + 1);
+            const float font = ImGui::GetFontSize();
+            const ImVec2 at = top - ImVec2(0.0f, 10.0f * s + font);
+            dl->AddCircleFilled(at + ImVec2(-6.0f * s, 0.5f * font), 4.0f * s,
+                                b < k_bodyColors.size() ? k_bodyColors[b] : k_hintColor);
+            dl->AddText(at, k_hintColor, label.c_str());
+        }
+    }
+    if (layer.marker) {
+        const ImVec2 p = toPixels(*layer.marker);
+        dl->AddCircle(p, 7.0f * s, k_highlightColor, 0, 2.0f * s);
+        dl->AddCircleFilled(p, 2.5f * s, k_highlightColor);
+    }
 }
 
 void drawStreamlines(ImDrawList* dl, const StreamlineSet& set, bool arrows, ImU32 colour = k_streamlineColor,
@@ -264,7 +360,7 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
         ImDrawList* dl = ImPlot::GetPlotDrawList();
         ImPlot::PushPlotClipRect();
 
-        drawSpeedBands(dl, layers.speed);
+        drawContourBands(dl, layers.contours);
 
         const bool hasSector = std::ranges::any_of(
             model.field.elements, [](const FlowElement& e) { return std::holds_alternative<SectorFlow>(e); });
@@ -282,6 +378,7 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
 
         drawStreamlines(dl, layers.equipotentials, false, k_equipotentialColor, 1.0f);
         drawStreamlines(dl, layers.streamlines, scene.plot.showArrows);
+        drawSurfaces(dl, layers.surfaces);
 
         if (scene.plot.showImages) {
             for (const FlowElement& image : model.images) {
@@ -313,7 +410,7 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
             }
         }
 
-        drawSpeedScale(dl, layers.speed, plotPos, result.pixelSize);
+        drawContourScale(dl, layers.contours, plotPos, result.pixelSize);
 
         if (scene.elements.empty()) {
             const char* hint = "Add flow elements with the toolbar on the left.";

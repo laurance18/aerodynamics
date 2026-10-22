@@ -6,7 +6,8 @@ add_library(pfl_ui STATIC
     toolbar.hpp toolbar.cpp
     parameter_dialog.hpp parameter_dialog.cpp
     plot_view.hpp plot_view.cpp
-    status_bar.hpp status_bar.cpp)
+    status_bar.hpp status_bar.cpp
+    surface_panel.hpp surface_panel.cpp)
 target_include_directories(pfl_ui PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(pfl_ui PUBLIC pfl_core pfl_imgui)
 pfl_set_warnings(pfl_ui)

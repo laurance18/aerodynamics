@@ -2,8 +2,8 @@
 //
 // File: New, Open, Save, Save As, the image and CSV exports, Clear All, Quit (and Reload shaders in
 // Debug builds). Elements: see elements_menu.hpp. View: reset the view and the plot settings that
-// are saved with the scene (streamline density, arrows, wall images, equipotentials, speed
-// contours, particles), edited in place.
+// are saved with the scene (streamline density, arrows, wall images, equipotentials, |V| or Cp
+// background, surface pressure, particles), edited in place.
 #pragma once
 
 #include "core/scene.hpp"
@@ -21,6 +21,7 @@ struct MainMenuActions {
     bool exportImage = false;
     bool exportField = false;
     bool exportLines = false;
+    bool exportSurface = false;
     bool clearAll = false;
     bool quit = false;
     bool reloadShaders = false;

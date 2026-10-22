@@ -12,8 +12,10 @@ the six required building blocks: uniform flow, source/sink, point vortex, secto
 doublet and straight symmetry wall. All of the specified interface is implemented: an icon toolbar
 with parameter dialogs, a labelled (x, y) plot, an *Elements* menu for editing and deleting, and a
 *File* menu with save, open, new and clear. The program also includes the optional extensions:
-equipotential lines, velocity-magnitude contours, zoom and pan, selectable element markers, Cp
-under the mouse, and image and data export.
+equipotential lines, velocity-magnitude contours, zoom and pan, selectable element markers, and
+image and data export. It also plots the pressure coefficient where a free stream defines it: under
+the mouse, as a colour map of the field, and along the surface of each body, together with the lift
+and drag obtained by integrating it.
 
 The program is written in C++20 (the brief allows Python, MATLAB, Julia or an equivalent language)
 and uses Dear ImGui/ImPlot for the interface and OpenGL for the tracer particles. It ships as a
@@ -72,6 +74,17 @@ $$C_p = 1 - \frac{|V|^2}{V_\infty^2},$$
 
 which the status bar shows under the mouse and the field export writes for every grid node. With
 no uniform flow there is no physically meaningful reference speed, so Cp is left undefined.
+
+**Surface pressure and forces.** Any streamline can be replaced by a solid wall. The bodies built
+by superposition are bounded by the dividing streamlines through the stagnation points. Integrating
+the surface pressure gives the force per unit span,
+
+$$\frac{\mathbf F'}{q_\infty} = -\oint C_p\,\mathbf n\,ds, \qquad q_\infty = \tfrac12\rho V_\infty^2,$$
+
+with n the outward normal (the constant p∞ integrates to zero around a closed surface). For an
+isolated body in a uniform stream the exact results are zero drag (d'Alembert's paradox) and the
+Kutta–Joukowski lift L′ = ρV∞Γ, i.e. L′/q∞ = 2Γ/V∞, with Γ the circulation enclosed. On a cylinder
+of radius a, C_p = 1 − (2 sin(θ − α) + Γ/2πaV∞)², from the surface velocity V_θ = −2V∞ sin(θ − α) − Γ/2πa.
 
 ## 3. Boundary conditions, domains and singularities
 
@@ -148,12 +161,34 @@ field v⊥/|v| = (−v, u)/|v|. Because ∇φ = v is normal to these curves, φ 
 them, and they cross every streamline at right angles. Tracing was chosen over contouring φ on a
 grid because φ is multivalued around a vortex. Its principal branch jumps by Γ across a cut, and
 a contouring algorithm would draw spurious lines along that cut. The traced lines are unaffected
-(Fig. 4). They use the same spacing as the streamlines, so where the speed is close to the typical
+(Fig. 5). They use the same spacing as the streamlines, so where the speed is close to the typical
 value the two families form an approximately square flow net.
 
 **Velocity-magnitude contours.** |V| is sampled at the centres of 4-pixel cells over the view and
 drawn in ten equal bands of the Viridis colour map, from 0 to twice the median speed in the view.
 A colour scale is shown in the plot.
+
+**Pressure coefficient.** The Cp background colours the same 4-pixel grid in bands of 0.25 on a
+diverging scale: red above the free-stream pressure, blue below it, neutral grey at Cp = 0. The
+scale runs from Cp = 1 (stagnation) down to the Cp of twice the median speed, which matches the |V|
+scale.
+
+**Body surfaces.** Stagnation points are found by Newton's method on the analytic W(z), started from
+a 32 × 32 grid of seeds around the singular points. Around each one, v is sampled on a small circle.
+Where it is radial, a dividing streamline leaves or arrives: four directions at a simple stagnation
+point, six at a double one. These lines are traced with RK4 on v/|v|, with the step reduced near
+stagnation points, where the direction turns quickly. Tracing stops at another stagnation point, at
+a singularity or at the edge of the region. Two lines that leave one stagnation point and meet at
+another form a closed body (cylinder, lifting cylinder, Rankine oval). Two that both leave the
+region form a half-body. Cp is evaluated at every traced point (about 4000 per cylinder), and the
+force integral uses the trapezoidal rule on the resulting polygon.
+
+A closed streamline through two stagnation points requires ψ to be equal at both, which holds only
+in a sufficiently symmetric flow. With other bodies nearby the two surfaces miss the rear
+stagnation point slightly. Gaps up to 10 % of the stagnation-point spacing are closed with a short
+segment and reported. A Rankine oval at incidence is not closed at all (ψ is odd about its centre,
+so its stagnation points lie on ψ and −ψ), and the program reports that no body was found rather
+than invent one.
 
 **Tracer particles.** Optional animated particles use midpoint RK2. They are a visual aid only;
 the streamlines are the result.
@@ -165,37 +200,42 @@ dependency and is unit-tested on its own.
 
 | Module | Contents | Depends on |
 |---|---|---|
-| `pfl_core` | elements, superposition, images, scene model, streamline/equipotential tracer, speed grid, particles | C++ standard library only |
+| `pfl_core` | elements, superposition, images, scene model, streamline/equipotential tracer, speed grid, body surfaces and forces, particles | C++ standard library only |
 | `pfl_io` | JSON scene files (versioned, validated), CSV export | core, nlohmann/json |
 | `pfl_render` | OpenGL particle layer | core, glad |
-| `pfl_ui` | toolbar, menus, parameter dialog, plot view, status bar | core, Dear ImGui, ImPlot |
+| `pfl_ui` | toolbar, menus, parameter dialog, plot view, surface-pressure panel, status bar | core, Dear ImGui, ImPlot |
 | `PotentialFlowLab` | window, main loop, wiring, file dialogs, PNG writer, command line | all of the above, GLFW |
 
 **Data flow.** The interface edits a `Scene` (the element list plus the plot settings).
 `buildFlowModel` turns it into the field that is actually evaluated: the original elements, their
 wall images and the wall-constrained uniform flows. The streamline tracer, equipotential tracer,
-speed map, particles, probe and exports all read this one `FlowField`, so whatever is drawn or
-exported comes from a single source of truth.
+speed and Cp maps, body surfaces, particles, probe and exports all read this one `FlowField`, so
+whatever is drawn or exported comes from a single source of truth.
 
 **Interface.** The toolbar has one icon per element type, with the name on hover. A click opens a
 modal dialog with Apply and Cancel, and Apply stays disabled until the input is valid. The plot
 has labelled axes with equal scales, scroll-to-zoom and drag-to-pan. Hovering an element marker
 names it, and double-clicking opens it for editing. The *Elements* menu lists every element with
 its parameters, each with Edit and Delete. The *View* menu holds streamline density, arrows, wall
-images, equipotentials, speed contours and particles. The *File* menu provides New, Open, Save,
-Save As, Clear All and the three exports.
+images, equipotentials, the |V| or Cp background, surface pressure and particles. *Surface
+pressure* colours each body surface by Cp, draws pressure arrows normal to it (inwards where
+Cp > 0, outwards where Cp < 0), and opens a side panel. The panel plots Cp against the angle around
+the body, x/c or arc length (Cp axis inverted, exact curve underneath for a cylinder) and lists the
+integrated drag and lift next to their exact values. Hovering the plot marks the matching point on
+the body. The *File* menu provides New, Open, Save, Save As, Clear All and the four exports.
 
 **Files and exports.** A scene is saved as a versioned JSON file containing every element with its
 parameters, the walls, the view limits and all View-menu settings. Opening it restores all of
 these. Exports are a PNG of the plot with axes, a CSV of x, y, u, v, |V|, φ, ψ and Cp on a
-201-column grid, and a CSV of every streamline and equipotential polyline. Numbers are written in
-the shortest form that reads back as the identical double. The same exports are available from
-the command line (`PotentialFlowLab.exe scene.json --export-image out.png --export-field out.csv`),
+201-column grid, a CSV of every streamline and equipotential polyline, and a CSV of the body
+surfaces (x, y, arc length, x/c, angle, Cp and the exact cylinder Cp). Numbers are written in the
+shortest form that reads back as the identical double. The same exports are available from the
+command line (`PotentialFlowLab.exe scene.json --export-image out.png --export-surface out.csv`),
 which `tools/report_figures.py` uses to produce every figure and number in Section 6.
 
 ## 6. Verification
 
-The unit-test suite (doctest, 24 test cases, 4541 assertions, all passing) covers each minimum
+The unit-test suite (doctest, 35 test cases, 8721 assertions, all passing) covers each minimum
 verification case of the brief. The script `tools/report_figures.py` adds an independent check. It
 exports the program's field on a 201 × 117 grid and compares it with the classical closed-form
 solutions, written in polar form in Python without reference to the program's complex-potential
@@ -240,6 +280,27 @@ x ≥ 0, y ≥ 0.
 export. Lines: Cp = 1 − (1 + a²/y² + Γ/2πV∞y)². At the surface Cp = −3 without circulation and
 −8 with Γ = 2π.*
 
+The surface export of the closed bodies is checked the same way. Its Cp is compared with the exact
+cylinder distribution, and the script integrates it around each body for drag and lift
+(`docs/figures/validation.md`):
+
+| Body | Surface points | Max. Cp error (exact cylinder) | D′/q∞ | L′/q∞ | Exact L′/q∞ = 2Γ/V∞ |
+|---|---:|---:|---:|---:|---:|
+| Cylinder, a = 1 | 4019 | 1.3 × 10⁻¹⁰ | 5.7 × 10⁻⁹ | 0.00000 | 0 |
+| Lifting cylinder, Γ = 2π | 4020 | 1.7 × 10⁻¹⁰ | 3.5 × 10⁻⁹ | 12.56637 | 12.56637 |
+| Rankine oval | 967 | – | 1.3 × 10⁻⁶ | 0.00000 | 0 |
+
+D'Alembert's paradox and the Kutta–Joukowski theorem are reproduced to the accuracy of the
+trapezoidal rule. The unit tests check the same for a lifting cylinder at α = 20° and for the
+dividing-streamline loop of a cylinder with Γ > 4πaV∞. They also check that half-bodies come out
+open, and that a Rankine oval at incidence is reported as not closed.
+
+<p align="center"><img src="figures/surface_cp.png" width="70%" alt="Cp around the cylinder surface against the angle: program samples on the exact curves for Γ = 0 and Γ = 2π"></p>
+
+*Figure 2. Surface Cp of the cylinder (a = 1, V∞ = 1) against the angle from the free-stream
+direction, Cp axis inverted. Markers: surface export (every 36th point). Lines: C_p = 1 − (2 sin θ +
+Γ/2πaV∞)².*
+
 ## 7. Examples
 
 <p align="center">
@@ -247,8 +308,8 @@ export. Lines: Cp = 1 − (1 + a²/y² + Γ/2πV∞y)². At the surface Cp = −
 <img src="figures/lifting_cylinder.png" width="49%" alt="Lifting cylinder with equipotential lines">
 </p>
 
-*Figure 2 (left). Non-lifting cylinder with |V| contours: stagnation (dark) at θ = 0° and 180°,
-|V| = 2V∞ at the top and bottom. Figure 3 (right). Lifting cylinder, Γ = 2π, with equipotential
+*Figure 3 (left). Non-lifting cylinder with |V| contours: stagnation (dark) at θ = 0° and 180°,
+|V| = 2V∞ at the top and bottom. Figure 4 (right). Lifting cylinder, Γ = 2π, with equipotential
 lines (orange): the stagnation points move down to 210° and 330°.*
 
 <p align="center">
@@ -256,8 +317,8 @@ lines (orange): the stagnation points move down to 210° and 330°.*
 <img src="figures/source_near_wall.png" width="49%" alt="Source above a symmetry wall">
 </p>
 
-*Figure 4 (left). Source (green), sink (red) and clockwise vortex (orange) with equipotentials. The
-equipotentials are radial around the vortex and continuous across its branch cut. Figure 5
+*Figure 5 (left). Source (green), sink (red) and clockwise vortex (orange) with equipotentials. The
+equipotentials are radial around the vortex and continuous across its branch cut. Figure 6
 (right). Source above the symmetry wall y = 0: no streamline crosses the wall. The image source
 below the wall is outside the view.*
 
@@ -266,16 +327,26 @@ below the wall is outside the view.*
 <img src="figures/rankine_oval.png" width="49%" alt="Rankine oval with speed contours">
 </p>
 
-*Figure 6 (left). Sector flow in a 90° corner (n = 2) with equipotentials. The region outside the
-wedge is masked. Figure 7 (right). Rankine oval (uniform flow, source and sink) with |V|
+*Figure 7 (left). Sector flow in a 90° corner (n = 2) with equipotentials. The region outside the
+wedge is masked. Figure 8 (right). Rankine oval (uniform flow, source and sink) with |V|
 contours.*
+
+<p align="center"><img src="figures/lifting_cylinder_pressure.png" width="60%" alt="Lifting cylinder with the Cp background and the surface coloured by Cp with pressure arrows"></p>
+
+*Figure 9. Lifting cylinder, Γ = 2π, with the Cp background and surface pressure. Red is above
+and blue below the free-stream pressure. The arrows show suction over the top and pressure near the
+two stagnation points, whose net effect is the lift L′/q∞ = 4π.*
 
 ## 8. Limitations and conclusions
 
 - RK4 with a fixed arc-length step is least accurate where the direction field turns quickly,
   near stagnation points and inside the doublet. Lines there may stop short or kink slightly (for
   example the dividing streamline on the cylinder surface is not drawn through the stagnation
-  points). This affects the picture only; the field values are exact.
+  points; the surface-pressure tracer, which refines its step there, does reach them). This
+  affects the picture only; the field values are exact.
+- Body surfaces are found through their stagnation points. A cylinder with Γ > 4πaV∞ has its only
+  stagnation point off the surface, so the body found is the dividing-streamline loop around it
+  (same forces). Bodies with more than two stagnation points on the surface are not assembled.
 - Walls that do not close the image system (parallel walls, or angles other than π/k) are
   approximated with 32 images per element, and the program warns when this happens.
 - The sector walls are streamlines of the sector term only, not of the superposed flow

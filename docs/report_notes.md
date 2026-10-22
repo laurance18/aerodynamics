@@ -67,6 +67,19 @@ check live for the current view.
   Same separation as the streamlines → approximate flow net.
 - Speed contours: |V| sampled at 4 px cell centres (`sampleSpeed`), 10 Viridis bands from 0 to
   2 × median speed; NaN outside the domain, +∞ (top band) at singular points.
+- Cp background: the same grid converted with Cp = 1 − |V|²/V∞², bands of 0.25 (0.5 / 1 when
+  the scale goes below −5 / −11) from 1 down to the Cp of 2 × median speed; diverging red / grey /
+  blue (`pressureColor` in `src/ui/style.cpp`, grey at Cp = 0).
+- Surface pressure (`src/core/surface_pressure.cpp`): stagnation points by Newton on W(z) from a
+  32 × 32 seed grid over the singular points grown by each element's length scale (Λ/V, Γ/2πV,
+  √(μ/V)); dividing streamlines where v is radial on a small circle round each; RK4 on v/|v| with
+  the step shrinking to 0.1 × the distance to the nearest stagnation point; a line ends at a
+  stagnation point within 0.75 step. Closed body = two branches from one stagnation point to
+  another (or one back to itself), oriented clockwise; open body = two branches both leaving the
+  region. Forces F/q = −Σ Cp perp(d) (trapezoidal), exact for isolated bodies: D = 0, L/q = 2Γ/V.
+  Near-closure up to 10 % of the stagnation-point spacing (`closureGap`), because ψ is generally
+  different at the two stagnation points once the flow is asymmetric (e.g. Rankine oval at
+  incidence: ψ odd about the centre, not closed).
 - Particles (`src/core/particles.hpp`): midpoint RK2 with sub-steps limited by distance travelled.
   Time is scaled so a particle at the median speed crosses the view in about 6 s.
 
@@ -74,10 +87,10 @@ check live for the current view.
 
 | Module | Contents | Depends on |
 |---|---|---|
-| `pfl_core` | elements, superposition, images, scene model, streamlines, particles | standard library only |
-| `pfl_io` | JSON scene files (versioned, validated) | core, nlohmann/json |
+| `pfl_core` | elements, superposition, images, scene model, streamlines, body surfaces, particles | standard library only |
+| `pfl_io` | JSON scene files (versioned, validated), CSV exports | core, nlohmann/json |
 | `pfl_render` | OpenGL particle layer (point sprites into an off-screen trail buffer) | core, glad |
-| `pfl_ui` | ImGui/ImPlot menus, toolbar, dialog, plot view, status bar | core, ImGui/ImPlot |
+| `pfl_ui` | ImGui/ImPlot menus, toolbar, dialog, plot view, surface-pressure panel, status bar | core, ImGui/ImPlot |
 | `PotentialFlowLab` | window, main loop, wiring, file dialogs | all of the above, GLFW |
 
 Data flow: the UI edits a `Scene` (element list + plot settings) → `buildFlowModel` adds wall
@@ -95,6 +108,9 @@ particles and the probe. Any edit rebuilds the model and recomputes the streamli
 - Save / reopen: round-trip unit test, and every file in `examples/` is loaded by a test.
 - Independent check: `tools/report_figures.py` compares the exported field CSVs with closed-form
   solutions written in polar form in numpy; all cases agree to ~1e-15 (`docs/figures/validation.md`).
+- Surface pressure: the surface CSV of the cylinders matches the exact Cp to ~1e-10; integrated
+  drag ~1e-9 (oval 1e-6) and lift 12.56637 = 2Γ/V∞ for Γ = 2π (same file, second table);
+  `tests/test_surface.cpp` covers α ≠ 0, Γ > 4πaV∞, half-bodies, two cylinders, oval at incidence.
 
 ## Results and screenshots
 

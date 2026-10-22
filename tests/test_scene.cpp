@@ -260,7 +260,8 @@ TEST_CASE("scenes survive a save/load round trip") {
     scene.plot.showArrows = false;
     scene.plot.showParticles = false;
     scene.plot.showEquipotentials = true;
-    scene.plot.showSpeedContours = true;
+    scene.plot.background = Background::PressureCoefficient;
+    scene.plot.showSurfacePressure = true;
 
     const SceneLoadResult loaded = sceneFromJson(sceneToJson(scene));
     REQUIRE_MESSAGE(loaded.scene.has_value(), loaded.error);
@@ -283,7 +284,8 @@ TEST_CASE("scenes survive a save/load round trip") {
     CHECK_FALSE(copy.plot.showArrows);
     CHECK_FALSE(copy.plot.showParticles);
     CHECK(copy.plot.showEquipotentials);
-    CHECK(copy.plot.showSpeedContours);
+    CHECK(copy.plot.background == Background::PressureCoefficient);
+    CHECK(copy.plot.showSurfacePressure);
 }
 
 TEST_CASE("invalid scene files are rejected with a message") {
@@ -310,4 +312,15 @@ TEST_CASE("every example scene loads") {
         ++count;
     }
     CHECK(count > 0);
+}
+
+TEST_CASE("plot background: older files with speed_contours still load") {
+    const SceneLoadResult old =
+        sceneFromJson(R"({"format": "pfl-scene", "version": 1, "elements": [], "plot": {"speed_contours": true}})");
+    REQUIRE(old.scene);
+    CHECK(old.scene->plot.background == Background::Speed);
+    CHECK_FALSE(old.scene->plot.showSurfacePressure);
+    const SceneLoadResult bad =
+        sceneFromJson(R"({"format": "pfl-scene", "version": 1, "elements": [], "plot": {"background": "pressure"}})");
+    CHECK_FALSE(bad.scene);
 }
