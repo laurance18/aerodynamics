@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include <array>
+#include <cstddef>
 
 namespace pfl {
 
@@ -22,6 +23,12 @@ inline constexpr ImU32 k_uniformColor = IM_COL32(235, 235, 235, 255);
 inline constexpr std::array<ImU32, 8> k_bodyColors = {
     IM_COL32(57, 135, 229, 255), IM_COL32(217, 89, 38, 255),  IM_COL32(25, 158, 112, 255), IM_COL32(201, 133, 0, 255),
     IM_COL32(213, 81, 129, 255), IM_COL32(0, 131, 0, 255),    IM_COL32(144, 133, 233, 255), IM_COL32(230, 103, 103, 255)};
+
+// Dye rakes, by rake index (cycling): bright hues that stand out from the blue streamlines.
+inline constexpr std::array<ImU32, 6> k_dyeColors = {IM_COL32(255, 90, 170, 255), IM_COL32(110, 235, 120, 255),
+                                                     IM_COL32(255, 175, 50, 255), IM_COL32(80, 215, 255, 255),
+                                                     IM_COL32(205, 135, 255, 255), IM_COL32(250, 240, 90, 255)};
+inline ImU32 dyeColor(std::size_t rake) { return k_dyeColors[rake % k_dyeColors.size()]; }
 
 // Diverging colour for a pressure coefficient: a neutral grey at Cp = 0 (free-stream pressure),
 // red towards Cp = 1 (stagnation) and blue towards `lowest` (< 0, the strongest suction shown).
@@ -43,6 +50,9 @@ void drawVortexGlyph(ImDrawList* dl, ImVec2 centre, float radius, bool clockwise
 // Two circles tangent to the doublet axis `axis` (unit screen vector, beta = 0 points right) and an
 // arrow along -axis, the direction of Anderson's doublet arrow (sink to source).
 void drawDoubletGlyph(ImDrawList* dl, ImVec2 centre, float radius, ImVec2 axis, ImU32 colour);
+
+// Toolbar icon for the dye rake tool: a rake with streaks trailing from it.
+void drawDyeRakeIcon(ImDrawList* dl, ImVec2 centre, float size);
 
 // Toolbar icon for an element type, fitted in a square of side `size` centred on `centre`.
 void drawToolIcon(ImDrawList* dl, ImVec2 centre, float size, ElementKind kind);

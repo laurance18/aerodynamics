@@ -6,7 +6,9 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <format>
 #include <string>
 #include <vector>
@@ -27,6 +29,14 @@ constexpr float k_maskCellPx = 6.0f;
 constexpr float k_hitRadiusPx = 10.0f;
 constexpr float k_speedAlpha = 0.6f;
 constexpr float k_pressureAlpha = 0.75f;
+constexpr float k_dyeWidthPx = 2.2f;
+constexpr float k_dyeDimming = 0.5f;   // brightness of every other pulse
+constexpr double k_dyeFadeFraction = 0.3; // dye fades out over this last part of its life
+constexpr float k_minRakePx = 8.0f;    // a shorter drag places a rake of the default length
+constexpr double k_defaultRakeFraction = 0.4; // ... this fraction of the view height, vertical
+constexpr const char* k_rakeMenu = "##rake-menu";
+// Modifier keys that are never all held: setting them as ImPlot's pan modifier switches panning off.
+constexpr int k_noPan = ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiMod_Alt | ImGuiMod_Super;
 
 ImVec2 toPixels(Vec2 p) { return ImPlot::PlotToPixels(p.x, p.y); }
 
@@ -235,6 +245,85 @@ void drawSurfaces(ImDrawList* dl, const SurfaceLayer& layer) {
     }
 }
 
+// A dragged position, rounded so the parameter dialog shows tidy numbers: to the power of ten just
+// below a pixel, or with `coarse` (Shift held) to a grid of a tenth of the view height's order of
+// magnitude (0.1 for a view 5 high).
+Vec2 snapped(Vec2 p, const Rect& limits, float heightPx, bool coarse) {
+    const double height = std::max(limits.size().y, 1e-12);
+    const double step = coarse ? std::pow(10.0, std::floor(std::log10(height)) - 1.0)
+                               : std::pow(10.0, std::floor(std::log10(height / std::max(heightPx, 1.0f))));
+    return {std::round(p.x / step) * step + 0.0, std::round(p.y / step) * step + 0.0};
+}
+
+// Dye streaks as polylines, split where points have died and where the pulse changes (the pieces
+// share their end points, so a streak has no gaps).
+void drawDye(ImDrawList* dl, const DyeLayer& dye) {
+    const float width = k_dyeWidthPx * uiScale();
+    const int pulse = std::max(dye.pulseLength, 1);
+    const double fadeAge = (1.0 - k_dyeFadeFraction) * dye.maxAge;
+    std::vector<ImVec2> run;
+    for (const DyeStreak& streak : dye.streaks) {
+        const ImVec4 base = ImGui::ColorConvertU32ToFloat4(dyeColor(streak.colour));
+        const auto flush = [&](int band, double age) {
+            if (run.size() >= 2) {
+                const float bright = band == 0 ? 1.0f : k_dyeDimming;
+                const float alpha =
+                    static_cast<float>(std::clamp(1.0 - (age - fadeAge) / (dye.maxAge - fadeAge), 0.0, 1.0));
+                const ImU32 colour = ImGui::ColorConvertFloat4ToU32({base.x * bright, base.y * bright, base.z * bright, alpha});
+                dl->AddPolyline(run.data(), static_cast<int>(run.size()), colour, ImDrawFlags_None, width);
+            }
+            run.clear();
+        };
+        int runBand = -1;
+        double runAge = 0.0;
+        for (const DyePoint& p : streak.points) {
+            if (!p.alive) {
+                flush(runBand, runAge);
+                runBand = -1;
+                continue;
+            }
+            const int band = static_cast<int>((p.serial / static_cast<std::uint32_t>(pulse)) % 2);
+            const ImVec2 pixel = toPixels(p.pos);
+            if (band != runBand && runBand >= 0) {
+                run.push_back(pixel); // the next pulse starts where this one ends
+                flush(runBand, runAge);
+            }
+            if (run.empty()) {
+                runBand = band;
+                runAge = p.age; // the oldest point of the piece sets its fade
+            }
+            run.push_back(pixel);
+        }
+        flush(runBand, runAge);
+    }
+}
+
+// A dye rake: its line, one dot per emitter and a handle at each end.
+void drawRake(ImDrawList* dl, const DyeRake& rake, ImU32 colour, bool highlighted) {
+    const float s = uiScale();
+    const ImVec2 a = toPixels(rake.start);
+    const ImVec2 b = toPixels(rake.end);
+    if (highlighted) dl->AddLine(a, b, k_highlightColor, 5.0f * s);
+    dl->AddLine(a, b, IM_COL32(20, 22, 30, 230), 3.5f * s);
+    dl->AddLine(a, b, fadeColor(colour, 0.8f), 1.5f * s);
+    for (const Vec2 e : emitterPositions(rake)) dl->AddCircleFilled(toPixels(e), 3.0f * s, colour);
+    const float h = 4.0f * s;
+    for (const ImVec2 end : {a, b}) {
+        dl->AddRectFilled(end - ImVec2(h, h), end + ImVec2(h, h), IM_COL32(20, 22, 30, 230));
+        dl->AddRect(end - ImVec2(h, h), end + ImVec2(h, h), highlighted ? k_highlightColor : colour, 0.0f, 0, 1.5f * s);
+    }
+}
+
+// A stagnation point: a diamond in the Cp = 1 colour, unlike the round source and sink markers.
+void drawStagnationPoint(ImDrawList* dl, Vec2 point) {
+    const float s = uiScale();
+    const ImVec2 c = toPixels(point);
+    const float r = 5.5f * s;
+    const ImVec2 corners[4] = {c + ImVec2(0.0f, -r), c + ImVec2(r, 0.0f), c + ImVec2(0.0f, r), c + ImVec2(-r, 0.0f)};
+    dl->AddQuadFilled(corners[0], corners[1], corners[2], corners[3], pressureColor(1.0, -1.0));
+    dl->AddQuad(corners[0], corners[1], corners[2], corners[3], k_highlightColor, 1.5f * s);
+}
+
 void drawStreamlines(ImDrawList* dl, const StreamlineSet& set, bool arrows, ImU32 colour = k_streamlineColor,
                      float width = 1.2f) {
     const float scale = uiScale();
@@ -328,6 +417,88 @@ float hitDistance(const SceneElement& element, ImVec2 mouse, const Rect& limits)
 
 } // namespace
 
+void PlotView::toggleRakePlacement() {
+    m_placingRake = !m_placingRake;
+    m_rakeStart.reset();
+}
+
+void PlotView::updateGrab(const Scene& scene, Vec2 mouseWorld, const Rect& limits, float heightPx,
+                          PlotViewResult& result) {
+    Grab& grab = *m_grab;
+    const bool isElement = grab.target == Target::Element;
+    if (isElement ? grab.index >= scene.elements.size() : grab.index >= scene.rakes.size()) {
+        m_grab.reset(); // deleted while held
+        return;
+    }
+    const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || cancel) {
+        if (cancel && grab.moved) {
+            // Put it back where it was.
+            if (isElement) result.move = ElementMove{grab.index, grab.anchor};
+            else result.rakeChange = RakeChange{grab.index, grab.rake};
+        }
+        m_grab.reset();
+        return;
+    }
+    grab.moved = grab.moved || ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+    if (!grab.moved) return;
+    result.dragging = true;
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+
+    const bool coarse = ImGui::GetIO().KeyShift;
+    const Vec2 delta = mouseWorld - grab.pressWorld;
+    const auto place = [&](Vec2 p) { return snapped(p + delta, limits, heightPx, coarse); };
+    if (isElement) {
+        const Vec2 position = place(grab.anchor);
+        if (anchorPoint(scene.elements[grab.index]) != position) result.move = ElementMove{grab.index, position};
+        return;
+    }
+    DyeRake rake = grab.rake;
+    if (grab.target == Target::Rake) {
+        rake.start = place(grab.rake.start);
+        rake.end = rake.start + (grab.rake.end - grab.rake.start); // moved as a whole: keep its shape
+    } else if (grab.target == Target::RakeStart) {
+        rake.start = place(grab.rake.start);
+    } else {
+        rake.end = place(grab.rake.end);
+    }
+    const DyeRake& current = scene.rakes[grab.index];
+    if (current.start != rake.start || current.end != rake.end) result.rakeChange = RakeChange{grab.index, rake};
+}
+
+void PlotView::updateRakePlacement(Vec2 mouseWorld, bool hovered, const Rect& limits, float heightPx,
+                                   PlotViewResult& result) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        m_placingRake = false;
+        m_rakeStart.reset();
+        return;
+    }
+    const Vec2 point = snapped(mouseWorld, limits, heightPx, ImGui::GetIO().KeyShift);
+    if (!m_rakeStart) {
+        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_rakeStart = point;
+        return;
+    }
+    DyeRake rake;
+    rake.start = *m_rakeStart;
+    rake.end = point;
+    const ImVec2 drag = toPixels(rake.end) - toPixels(rake.start);
+    const float minLength = k_minRakePx * uiScale();
+    const bool tooShort = drag.x * drag.x + drag.y * drag.y < minLength * minLength;
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (!tooShort) drawRake(ImPlot::GetPlotDrawList(), rake, k_highlightColor, false);
+        return;
+    }
+    if (tooShort) {
+        // A click: a vertical rake centred on it.
+        const Vec2 half{0.0, 0.5 * k_defaultRakeFraction * limits.size().y};
+        rake.start = snapped(*m_rakeStart - half, limits, heightPx, true);
+        rake.end = snapped(*m_rakeStart + half, limits, heightPx, true);
+    }
+    result.rakeChange = RakeChange{std::nullopt, rake};
+    m_placingRake = false;
+    m_rakeStart.reset();
+}
+
 PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const FlowModel& model,
                               const PlotLayers& layers) {
     const ParticleLayer& particles = layers.particles;
@@ -343,6 +514,12 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
                                        ImGuiWindowFlags_NoBringToFrontOnFocus;
     ImGui::Begin("##plot-window", nullptr, flags);
     ImGui::PopStyleVar(2);
+
+    // A press on something draggable (or while placing a rake) must not pan the plot as well. The
+    // decision uses last frame's hover, since ImPlot handles the press inside BeginPlot.
+    ImPlotInputMap& input = ImPlot::GetInputMap();
+    const int panMod = input.PanMod;
+    if (m_grab || m_grabbableHovered || m_placingRake) input.PanMod = k_noPan;
 
     constexpr ImPlotFlags plotFlags = ImPlotFlags_Equal | ImPlotFlags_NoTitle | ImPlotFlags_NoLegend |
                                       ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
@@ -378,6 +555,7 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
 
         drawStreamlines(dl, layers.equipotentials, false, k_equipotentialColor, 1.0f);
         drawStreamlines(dl, layers.streamlines, scene.plot.showArrows);
+        drawDye(dl, layers.dye);
         drawSurfaces(dl, layers.surfaces);
 
         if (scene.plot.showImages) {
@@ -386,11 +564,35 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
             }
         }
 
-        // Originals, remembering the one under the mouse.
         const bool hovered = ImPlot::IsPlotHovered();
+        const bool idle = hovered && !m_grab && !m_placingRake; // hover feedback and new grabs
         const ImVec2 mouse = ImGui::GetMousePos();
+        const Vec2 mouseWorld = toWorld(mouse);
+        const float hitRadius = k_hitRadiusPx * uiScale();
+
+        // The rake (and the part of it) under the mouse: an end handle, or the line itself.
+        std::optional<std::size_t> rakeHit;
+        Target rakeTarget = Target::Rake;
+        float rakeDist = hitRadius;
+        for (std::size_t i = 0; i < scene.rakes.size() && idle; ++i) {
+            const ImVec2 a = toPixels(scene.rakes[i].start);
+            const ImVec2 b = toPixels(scene.rakes[i].end);
+            const std::array<std::pair<Target, float>, 3> parts = {{
+                {Target::RakeStart, std::hypot(mouse.x - a.x, mouse.y - a.y)},
+                {Target::RakeEnd, std::hypot(mouse.x - b.x, mouse.y - b.y)},
+                {Target::Rake, distanceToSegment(mouse, a, b) + 0.5f * hitRadius}, // the ends win near them
+            }};
+            for (const auto& [target, d] : parts) {
+                if (d >= rakeDist) continue;
+                rakeDist = d;
+                rakeHit = i;
+                rakeTarget = target;
+            }
+        }
+
+        // Originals, remembering the one under the mouse.
         std::optional<std::size_t> hit;
-        float hitDist = k_hitRadiusPx * uiScale();
+        float hitDist = hitRadius;
         int uniformSlot = 0;
         for (std::size_t i = 0; i < scene.elements.size(); ++i) {
             const SceneElement& element = scene.elements[i];
@@ -404,9 +606,27 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
                 drawMarker(dl, element, result.limits, 1.0f);
                 d = hitDistance(element, mouse, result.limits);
             }
-            if (hovered && d < hitDist) {
+            if (idle && d < hitDist) {
                 hitDist = d;
                 hit = i;
+            }
+        }
+        if (hit) rakeHit.reset(); // elements are on top
+
+        for (std::size_t i = 0; i < scene.rakes.size(); ++i) {
+            const bool held = m_grab && m_grab->target != Target::Element && m_grab->index == i;
+            drawRake(dl, scene.rakes[i], dyeColor(i), rakeHit == i || held);
+        }
+
+        std::optional<Vec2> stagnationHit;
+        float stagnationDist = hitRadius;
+        for (const Vec2 point : layers.stagnationPoints) {
+            drawStagnationPoint(dl, point);
+            const ImVec2 d = toPixels(point) - mouse;
+            const float distance = std::sqrt(d.x * d.x + d.y * d.y);
+            if (idle && !hit && !rakeHit && distance < stagnationDist) {
+                stagnationDist = distance;
+                stagnationHit = point;
             }
         }
 
@@ -418,23 +638,52 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
             dl->AddText(plotPos + (result.pixelSize - textSize) * 0.5f, k_hintColor, hint);
         }
 
+        const float plotHeightPx = result.pixelSize.y;
+        if (m_grab) updateGrab(scene, mouseWorld, result.limits, plotHeightPx, result);
+        if (m_placingRake) {
+            updateRakePlacement(mouseWorld, hovered, result.limits, plotHeightPx, result);
+            const char* hint = "Drag across the plot to place a dye rake (or click for a vertical one). Esc cancels.";
+            const float s = uiScale();
+            const ImVec2 textSize = ImGui::CalcTextSize(hint);
+            const ImVec2 boxMin = plotPos + ImVec2(0.5f * (result.pixelSize.x - textSize.x) - 8.0f * s, 10.0f * s);
+            dl->AddRectFilled(boxMin, boxMin + textSize + ImVec2(16.0f * s, 8.0f * s), IM_COL32(15, 17, 24, 210), 4.0f * s);
+            dl->AddText(boxMin + ImVec2(8.0f * s, 4.0f * s), k_highlightColor, hint);
+        }
+
+        const bool pressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        const bool draggable = hit && !std::holds_alternative<UniformFlow>(scene.elements[*hit]);
         if (hit) {
             const SceneElement& element = scene.elements[*hit];
-            ImVec2 centre = mouse;
-            if (!std::holds_alternative<SymmetryWall>(element) && !std::holds_alternative<UniformFlow>(element)) {
-                std::visit(
-                    [&](const auto& e) {
-                        using T = std::decay_t<decltype(e)>;
-                        if constexpr (std::is_same_v<T, SectorFlow>) centre = toPixels(e.vertex);
-                        else if constexpr (requires { e.position; }) centre = toPixels(e.position);
-                    },
-                    element);
-                dl->AddCircle(centre, 11.0f * uiScale(), k_highlightColor, 0, 1.5f * uiScale());
+            const std::optional<Vec2> anchor = anchorPoint(element);
+            if (anchor && !std::holds_alternative<SymmetryWall>(element)) {
+                dl->AddCircle(toPixels(*anchor), 11.0f * uiScale(), k_highlightColor, 0, 1.5f * uiScale());
             }
-            ImGui::SetTooltip("#%zu  %s\n%s\nDouble-click to edit.", *hit + 1, kindName(kindOf(element)),
-                              describe(element).c_str());
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) result.editRequest = hit;
+            ImGui::SetTooltip("#%zu  %s\n%s\n%s", *hit + 1, kindName(kindOf(element)), describe(element).c_str(),
+                              draggable ? "Drag to move (Shift snaps to a grid), double-click to edit."
+                                        : "Double-click to edit.");
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                result.editRequest = hit;
+            } else if (draggable && pressed) {
+                m_grab = Grab{.target = Target::Element, .index = *hit, .pressWorld = mouseWorld, .anchor = *anchor};
+            }
+            if (draggable) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        } else if (rakeHit) {
+            const DyeRake& rake = scene.rakes[*rakeHit];
+            ImGui::SetTooltip("Dye rake %zu  (%d emitter%s)\n%s\nRight-click for options; Delete removes it.",
+                              *rakeHit + 1, rake.emitters, rake.emitters == 1 ? "" : "s",
+                              rakeTarget == Target::Rake ? "Drag to move it." : "Drag to turn or stretch it.");
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            if (pressed) m_grab = Grab{.target = rakeTarget, .index = *rakeHit, .pressWorld = mouseWorld, .rake = rake};
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                m_rakeMenu = rakeHit;
+                ImGui::OpenPopup(k_rakeMenu);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete)) result.rakeRemove = rakeHit;
+        } else if (stagnationHit) {
+            ImGui::SetTooltip("Stagnation point (%.4g, %.4g)\nV = 0%s", stagnationHit->x, stagnationHit->y,
+                              model.freeStreamSpeed > 0.0 ? ", Cp = 1" : "");
         }
+        m_grabbableHovered = draggable || rakeHit.has_value();
 
         ImPlot::PopPlotClipRect();
         if (hovered) {
@@ -442,6 +691,21 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
             result.mouse = Vec2{m.x, m.y};
         }
         ImPlot::EndPlot();
+    }
+    input.PanMod = panMod;
+
+    if (ImGui::BeginPopup(k_rakeMenu)) {
+        if (m_rakeMenu && *m_rakeMenu < scene.rakes.size()) {
+            const std::size_t i = *m_rakeMenu;
+            DyeRake rake = scene.rakes[i];
+            ImGui::TextDisabled("Dye rake %zu", i + 1);
+            ImGui::SetNextItemWidth(160.0f * uiScale());
+            if (ImGui::SliderInt("Emitters", &rake.emitters, 1, k_maxRakeEmitters)) result.rakeChange = RakeChange{i, rake};
+            if (ImGui::MenuItem("Delete")) result.rakeRemove = i;
+        } else {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
     ImGui::End();
     return result;

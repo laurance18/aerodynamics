@@ -7,6 +7,7 @@ add_library(pfl_core STATIC
     scene.hpp scene.cpp
     streamline.hpp streamline.cpp
     surface_pressure.hpp surface_pressure.cpp
-    particles.hpp particles.cpp)
+    particles.hpp particles.cpp
+    dye.hpp dye.cpp)
 target_include_directories(pfl_core PUBLIC "${PROJECT_SOURCE_DIR}/src")
 pfl_set_warnings(pfl_core)

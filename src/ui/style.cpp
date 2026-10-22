@@ -111,4 +111,22 @@ void drawToolIcon(ImDrawList* dl, ImVec2 c, float size, ElementKind kind) {
     }
 }
 
+void drawDyeRakeIcon(ImDrawList* dl, ImVec2 c, float size) {
+    const float s = uiScale();
+    const float h = 0.5f * size;
+    const ImVec2 top = c + ImVec2(-0.7f * h, -0.75f * h);
+    const ImVec2 bottom = c + ImVec2(-0.7f * h, 0.75f * h);
+    dl->AddLine(top, bottom, IM_COL32(200, 200, 210, 255), 1.6f * s);
+    for (int i = 0; i < 3; ++i) {
+        const ImVec2 o = top + (bottom - top) * ((i + 0.5f) / 3.0f);
+        const ImU32 colour = k_dyeColors[static_cast<std::size_t>(i)];
+        for (int k = 0; k <= 12; ++k) {
+            const float t = k / 12.0f;
+            dl->PathLineTo(o + ImVec2(1.5f * h * t, 0.12f * h * std::sin(t * 2.0f * k_pi)));
+        }
+        dl->PathStroke(colour, ImDrawFlags_None, 2.0f * s);
+        dl->AddCircleFilled(o, 2.2f * s, colour);
+    }
+}
+
 } // namespace pfl

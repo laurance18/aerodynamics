@@ -13,8 +13,8 @@ constexpr float k_padding = 6.0f;
 
 float toolbarWidth() { return (k_buttonSize + 2.0f * k_padding) * uiScale(); }
 
-std::optional<ElementKind> drawToolbar(ImVec2 pos, ImVec2 size) {
-    std::optional<ElementKind> clicked;
+ToolbarAction drawToolbar(ImVec2 pos, ImVec2 size, bool placingRake) {
+    ToolbarAction action;
     const float s = uiScale();
     const float button = k_buttonSize * s;
 
@@ -28,23 +28,32 @@ std::optional<ElementKind> drawToolbar(ImVec2 pos, ImVec2 size) {
     ImGui::Begin("##toolbar", nullptr, flags);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    for (const ElementKind kind : k_elementKinds) {
-        ImGui::PushID(static_cast<int>(kind));
-        if (ImGui::InvisibleButton("##tool", ImVec2(button, button))) clicked = kind;
+    // The button just submitted, with its background; returns its centre for the icon.
+    const auto buttonBackground = [&](bool active) {
         const ImVec2 min = ImGui::GetItemRectMin();
         const ImVec2 max = ImGui::GetItemRectMax();
-        const ImGuiCol background = ImGui::IsItemActive()    ? ImGuiCol_ButtonActive
-                                    : ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered
-                                                             : ImGuiCol_Button;
+        const ImGuiCol background = ImGui::IsItemActive() || active ? ImGuiCol_ButtonActive
+                                    : ImGui::IsItemHovered()        ? ImGuiCol_ButtonHovered
+                                                                    : ImGuiCol_Button;
         dl->AddRectFilled(min, max, ImGui::GetColorU32(background), 6.0f * s);
-        drawToolIcon(dl, (min + max) * 0.5f, 0.78f * button, kind);
+        return (min + max) * 0.5f;
+    };
+    for (const ElementKind kind : k_elementKinds) {
+        ImGui::PushID(static_cast<int>(kind));
+        if (ImGui::InvisibleButton("##tool", ImVec2(button, button))) action.element = kind;
+        drawToolIcon(dl, buttonBackground(false), 0.78f * button, kind);
         ImGui::SetItemTooltip("%s", kindName(kind));
         ImGui::PopID();
     }
 
+    ImGui::Separator();
+    if (ImGui::InvisibleButton("##rake", ImVec2(button, button))) action.placeRake = true;
+    drawDyeRakeIcon(dl, buttonBackground(placingRake), 0.78f * button);
+    ImGui::SetItemTooltip("Dye rake\nDrag across the plot to place a line of dye emitters.");
+
     ImGui::End();
     ImGui::PopStyleVar(2);
-    return clicked;
+    return action;
 }
 
 } // namespace pfl

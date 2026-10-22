@@ -1,6 +1,7 @@
 #include "app/app.hpp"
 
 #include "app/platform_win32.hpp"
+#include "core/dye.hpp"
 #include "core/particles.hpp"
 #include "core/scene.hpp"
 #include "core/streamline.hpp"
@@ -71,6 +72,12 @@ constexpr double k_particleLifetime = 6.0; // seconds before a particle respawns
 constexpr float k_trailFade = 0.08f;       // fraction of the trail removed per frame
 constexpr float k_pointSize = 2.0f;        // pixels
 
+// Dye: released this often from every emitter, drawn in pulses of this length, kept this long
+// (seconds of animation; at the typical speed dye crosses the view in k_crossingSeconds).
+constexpr double k_dyeReleaseInterval = 1.0 / 30.0;
+constexpr double k_dyePulseSeconds = 0.5;
+constexpr double k_dyeLifetime = 15.0;
+
 constexpr const char* k_glRequiredTitle = "Potential Flow Lab - OpenGL 3.3 required";
 constexpr const char* k_glRequiredText =
     "Potential Flow Lab could not create an OpenGL 3.3 window.\n\n"
@@ -139,8 +146,12 @@ private:
     void openExample(const ExampleScene& example);
     void saveScene(bool askForPath);
     void setScene(Scene scene, std::filesystem::path path, const ExampleScene* example = nullptr);
-    void sceneEdited();
-    void rebuildModel();
+    // `live`: one step of a drag; the particles keep flowing instead of starting over.
+    void sceneEdited(bool live = false);
+    void rebuildModel(bool live = false);
+    void applyRakeChange(const RakeChange& change);
+    void removeRake(std::size_t index);
+    void rakesEdited();
     void updateTitle();
     void onCloseRequested();
 
@@ -160,6 +171,8 @@ private:
     // Per-frame work after the UI.
     void updateStreamlines();
     void renderParticles(double dt);
+    void updateDye(double dt);
+    double animationTimeScale(const Rect& view) const;
     bool particlesVisible() const;
     StatusInfo statusInfo() const;
 
@@ -200,6 +213,7 @@ private:
     ContourMap m_contours;
     std::vector<BodySurface> m_surfaces;
     double m_lowestCp = -3.0; // bottom of the Cp colour scale
+    std::vector<Vec2> m_stagnationPoints;
     std::optional<Rect> m_streamlineView;
     bool m_streamlinesDirty = true;
 
@@ -208,6 +222,9 @@ private:
     double m_referenceSpeed = 0.0;
     std::optional<Rect> m_particleView;
     bool m_respawnParticles = true;
+
+    // Dye released by the scene's rakes.
+    DyeSystem m_dye;
 
     // A pending File > Export image: written once the frame no longer shows the menu or dialog.
     struct ImageCapture {
@@ -419,15 +436,19 @@ void App::frame(double dt) {
     const float toolWidth = toolbarWidth();
     const float bodyHeight = std::max(workSize.y - statusHeight, 1.0f);
 
-    if (const std::optional<ElementKind> kind = drawToolbar(workPos, ImVec2(toolWidth, bodyHeight))) {
-        m_dialog.openNew(defaultElement(*kind, newElementPosition(m_scene.plot.view)));
-    }
+    const ToolbarAction tool = drawToolbar(workPos, ImVec2(toolWidth, bodyHeight), m_plotView.placingRake());
+    if (tool.element) m_dialog.openNew(defaultElement(*tool.element, newElementPosition(m_scene.plot.view)));
+    if (tool.placeRake) m_plotView.toggleRakePlacement();
 
     PlotLayers layers{.streamlines = m_streamlines,
                       .equipotentials = m_equipotentials,
                       .contours = m_contours,
                       .surfaces = {.bodies = m_surfaces, .lowestCp = m_lowestCp, .marker = m_surfaceMarker},
-                      .particles = {}};
+                      .particles = {},
+                      .stagnationPoints = m_stagnationPoints,
+                      .dye = {.streaks = m_dye.streaks(),
+                              .maxAge = k_dyeLifetime,
+                              .pulseLength = static_cast<int>(std::lround(k_dyePulseSeconds / k_dyeReleaseInterval))}};
     if (particlesVisible() && m_trailRenderer->texture() != 0) {
         layers.particles.texture = static_cast<ImTextureID>(m_trailRenderer->texture());
         layers.particles.beginBlend = premultipliedBlend;
@@ -444,6 +465,13 @@ void App::frame(double dt) {
     }
     m_scene.plot.view = m_plot.limits; // panning and zooming are saved with the scene, but are not "edits"
     if (m_plot.editRequest) m_dialog.openEdit(*m_plot.editRequest, m_scene.elements[*m_plot.editRequest]);
+    if (m_plot.move && m_plot.move->index < m_scene.elements.size()) {
+        SceneElement& element = m_scene.elements[m_plot.move->index];
+        element = movedTo(std::move(element), m_plot.move->position);
+        sceneEdited(true);
+    }
+    if (m_plot.rakeChange) applyRakeChange(*m_plot.rakeChange);
+    if (m_plot.rakeRemove) removeRake(*m_plot.rakeRemove);
 
     handleMenu(actions);
 
@@ -467,6 +495,7 @@ void App::frame(double dt) {
     // --- Flow -----------------------------------------------------------------------------
     updateStreamlines();
     renderParticles(dt);
+    updateDye(dt);
 
     // --- Screen ---------------------------------------------------------------------------
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -510,6 +539,11 @@ void App::handleMenu(const MainMenuActions& actions) {
     if ((actions.clearAll || elements.removeAll) && !m_scene.elements.empty()) {
         m_scene.elements.clear();
         sceneEdited();
+    }
+    if ((actions.clearAll || elements.removeAllRakes) && !m_scene.rakes.empty()) {
+        m_scene.rakes.clear();
+        m_dye.detach();
+        rakesEdited();
     }
 }
 
@@ -583,22 +617,50 @@ void App::setScene(Scene scene, std::filesystem::path path, const ExampleScene* 
     m_example = example;
     m_dirty = false;
     m_plotView.setView(m_scene.plot.view);
+    m_dye.clear();
     rebuildModel();
     updateTitle();
 }
 
-void App::sceneEdited() {
+void App::sceneEdited(bool live) {
     m_dirty = true;
-    rebuildModel();
+    rebuildModel(live);
     updateTitle();
 }
 
-void App::rebuildModel() {
+void App::rebuildModel(bool live) {
     m_model = buildFlowModel(m_scene);
     m_warnings = sceneWarnings(m_scene, m_model);
     m_streamlinesDirty = true;
+    if (live) return;
     m_respawnParticles = true;
     m_trailRenderer->clear();
+}
+
+void App::applyRakeChange(const RakeChange& change) {
+    if (change.index && *change.index < m_scene.rakes.size()) {
+        DyeRake& rake = m_scene.rakes[*change.index];
+        // A moved rake keeps feeding its streaks; a different number of emitters starts new ones.
+        if (rake.emitters != change.rake.emitters) m_dye.detach();
+        rake = change.rake;
+    } else {
+        m_scene.rakes.push_back(change.rake);
+        m_dye.detach();
+    }
+    rakesEdited();
+}
+
+void App::removeRake(std::size_t index) {
+    if (index >= m_scene.rakes.size()) return;
+    m_scene.rakes.erase(m_scene.rakes.begin() + static_cast<std::ptrdiff_t>(index));
+    m_dye.detach();
+    rakesEdited();
+}
+
+// Rakes are saved with the scene but do not change the flow.
+void App::rakesEdited() {
+    m_dirty = true;
+    updateTitle();
 }
 
 void App::updateTitle() {
@@ -628,6 +690,7 @@ void App::updateStreamlines() {
     m_equipotentials = {};
     m_contours = {};
     m_surfaces.clear();
+    m_stagnationPoints.clear();
     if (!m_model.field.elements.empty()) {
         const double worldPerPixel = view.size().x / m_plot.pixelSize.x;
         StreamlineSettings settings;
@@ -667,6 +730,9 @@ void App::updateStreamlines() {
             }
         }
         if (m_scene.plot.showSurfacePressure) m_surfaces = findBodySurfaces(m_model, view);
+        if (m_scene.plot.showStagnationPoints && m_referenceSpeed > 0.0) {
+            m_stagnationPoints = findStagnationPoints(m_model.field, view, m_referenceSpeed);
+        }
     }
     m_streamlineView = view;
     m_streamlinesDirty = false;
@@ -682,8 +748,7 @@ void App::renderParticles(double dt) {
         m_trailRenderer->clear(); // old trails would be in the wrong place
     }
 
-    // Time runs so that a particle at the typical speed crosses the view in k_crossingSeconds.
-    const double timeScale = m_referenceSpeed > 0.0 ? view.size().x / (k_crossingSeconds * m_referenceSpeed) : 0.0;
+    const double timeScale = animationTimeScale(view);
     ParticleSettings& settings = m_particles.settings();
     settings.bounds = view;
     settings.maxStepLength = view.size().x / 300.0;
@@ -710,6 +775,39 @@ void App::renderParticles(double dt) {
     m_trailRenderer->begin(m_scene.plot.particleTrails ? k_trailFade : 1.0f);
     m_particleRenderer->draw(particleView);
     m_trailRenderer->end();
+}
+
+void App::updateDye(double dt) {
+    if (m_scene.rakes.empty() && m_dye.streaks().empty()) return;
+    const FlowField& field = m_model.field;
+    if (field.elements.empty()) {
+        m_dye.clear();
+        return;
+    }
+    const Rect view = m_plot.limits;
+    const double timeScale = animationTimeScale(view);
+    if (!(timeScale > 0.0)) return;
+
+    DyeSettings& settings = m_dye.settings();
+    settings.bounds = view.expanded(0.25);
+    settings.maxAge = k_dyeLifetime;
+    settings.releaseInterval = k_dyeReleaseInterval;
+    settings.maxStepLength = view.size().x / 300.0;
+
+    std::vector<DyeEmitter> emitters;
+    for (std::size_t i = 0; i < m_scene.rakes.size(); ++i) {
+        for (const Vec2 p : emitterPositions(m_scene.rakes[i])) emitters.push_back({p, i});
+    }
+    // Dye is advected in animation time, so its lifetime and release interval are in seconds.
+    const double guard = view.size().x / 300.0;
+    m_dye.step(
+        dt, emitters, [&field, timeScale](Vec2 p) { return field.velocity(p) * timeScale; },
+        [&field, guard](Vec2 p) { return field.inDomain(p) && !field.nearSingularity(p, guard); });
+}
+
+// Animation time runs so that a particle at the typical speed crosses the view in k_crossingSeconds.
+double App::animationTimeScale(const Rect& view) const {
+    return m_referenceSpeed > 0.0 ? view.size().x / (k_crossingSeconds * m_referenceSpeed) : 0.0;
 }
 
 std::filesystem::path App::suggestedExportPath(const char* suffix) const {

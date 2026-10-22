@@ -26,6 +26,10 @@ ElementsMenuAction drawElementsMenu(const Scene& scene) {
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Delete all", nullptr, false, !scene.elements.empty())) action.removeAll = true;
+    const std::string rakes = std::format("Delete all dye rakes ({})", scene.rakes.size());
+    if (ImGui::MenuItem(rakes.c_str(), nullptr, false, !scene.rakes.empty())) action.removeAllRakes = true;
+    ImGui::SetItemTooltip("Dye rakes are placed with the rake tool at the bottom of the toolbar.\n"
+                          "Right-click a rake for its options.");
     ImGui::EndMenu();
     return action;
 }

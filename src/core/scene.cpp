@@ -94,6 +94,27 @@ std::optional<std::string> sceneElementError(const SceneElement& element) {
     return validationError(*asFlowElement(element));
 }
 
+std::optional<Vec2> anchorPoint(const SceneElement& element) {
+    return std::visit(Overloaded{
+                          [](const UniformFlow&) -> std::optional<Vec2> { return std::nullopt; },
+                          [](const SectorFlow& e) -> std::optional<Vec2> { return e.vertex; },
+                          [](const SymmetryWall& e) -> std::optional<Vec2> { return e.point; },
+                          [](const auto& e) -> std::optional<Vec2> { return e.position; },
+                      },
+                      element);
+}
+
+SceneElement movedTo(SceneElement element, Vec2 position) {
+    std::visit(Overloaded{
+                   [](UniformFlow&) {},
+                   [position](SectorFlow& e) { e.vertex = position; },
+                   [position](SymmetryWall& e) { e.point = position; },
+                   [position](auto& e) { e.position = position; },
+               },
+               element);
+    return element;
+}
+
 FlowModel buildFlowModel(const Scene& scene) {
     FlowModel model;
     std::vector<FlowElement> flows;

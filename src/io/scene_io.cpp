@@ -98,6 +98,7 @@ json plotToJson(const PlotSettings& p) {
             {"equipotentials", p.showEquipotentials},
             {"background", backgroundName(p.background)},
             {"surface_pressure", p.showSurfacePressure},
+            {"stagnation_points", p.showStagnationPoints},
             {"particles", p.showParticles},
             {"particle_trails", p.particleTrails}};
 }
@@ -122,9 +123,23 @@ PlotSettings plotFromJson(const json& j) {
         p.background = known->first;
     }
     p.showSurfacePressure = j.value("surface_pressure", p.showSurfacePressure);
+    p.showStagnationPoints = j.value("stagnation_points", p.showStagnationPoints);
     p.showParticles = j.value("particles", p.showParticles);
     p.particleTrails = j.value("particle_trails", p.particleTrails);
     return p;
+}
+
+json rakeToJson(const DyeRake& r) {
+    return {{"x1", r.start.x}, {"y1", r.start.y}, {"x2", r.end.x}, {"y2", r.end.y}, {"emitters", r.emitters}};
+}
+
+DyeRake rakeFromJson(const json& j) {
+    const auto num = [&j](const char* key) { return j.at(key).get<double>(); };
+    DyeRake r;
+    r.start = {num("x1"), num("y1")};
+    r.end = {num("x2"), num("y2")};
+    r.emitters = j.value("emitters", r.emitters);
+    return r;
 }
 
 std::optional<std::string> plotError(const PlotSettings& p) {
@@ -144,8 +159,13 @@ std::optional<std::string> plotError(const PlotSettings& p) {
 std::string sceneToJson(const Scene& scene) {
     json elements = json::array();
     for (const SceneElement& e : scene.elements) elements.push_back(elementToJson(e));
-    const json doc = {
-        {"format", k_format}, {"version", k_version}, {"elements", elements}, {"plot", plotToJson(scene.plot)}};
+    json doc = {{"format", k_format}, {"version", k_version}, {"elements", elements}};
+    if (!scene.rakes.empty()) {
+        json rakes = json::array();
+        for (const DyeRake& r : scene.rakes) rakes.push_back(rakeToJson(r));
+        doc["dye_rakes"] = rakes;
+    }
+    doc["plot"] = plotToJson(scene.plot);
     return doc.dump(2);
 }
 
@@ -179,6 +199,20 @@ SceneLoadResult sceneFromJson(std::string_view text) {
             if (auto error = sceneElementError(scene.elements.back())) {
                 throw std::runtime_error("element #" + std::to_string(i + 1) + " (" +
                                          kindName(kindOf(scene.elements.back())) + "): " + *error);
+            }
+        }
+        if (doc.contains("dye_rakes")) {
+            const json& rakes = doc.at("dye_rakes");
+            if (!rakes.is_array()) throw std::runtime_error("\"dye_rakes\" must be an array");
+            for (std::size_t i = 0; i < rakes.size(); ++i) {
+                try {
+                    scene.rakes.push_back(rakeFromJson(rakes[i]));
+                } catch (const std::exception& e) {
+                    throw std::runtime_error("dye rake #" + std::to_string(i + 1) + ": " + e.what());
+                }
+                if (auto error = dyeRakeError(scene.rakes.back())) {
+                    throw std::runtime_error("dye rake #" + std::to_string(i + 1) + ": " + *error);
+                }
             }
         }
         if (doc.contains("plot")) scene.plot = plotFromJson(doc.at("plot"));

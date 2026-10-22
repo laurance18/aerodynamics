@@ -4,7 +4,7 @@
 // Debug builds). Examples: the built-in example scenes (io/examples.hpp), each loaded with one click.
 // Elements: see elements_menu.hpp. View: reset the view and the plot settings that
 // are saved with the scene (streamline density, arrows, wall images, equipotentials, |V| or Cp
-// background, surface pressure, particles), edited in place.
+// background, surface pressure, stagnation points, particles), edited in place.
 #pragma once
 
 #include "core/scene.hpp"

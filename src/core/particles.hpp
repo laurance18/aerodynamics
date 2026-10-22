@@ -25,6 +25,25 @@ struct ParticleSettings {
     int maxSubsteps = 16;
 };
 
+// Moves `p` by dt along `velocity` (any callable Vec2 -> Vec2) with midpoint RK2, split into
+// sub-steps so that none travels farther than maxStepLength (at most maxSubsteps of them).
+// Returns the speed of the last sub-step.
+template <typename VelocityFn>
+double advect(Vec2& p, double dt, const VelocityFn& velocity, double maxStepLength, int maxSubsteps) {
+    const Vec2 v0 = velocity(p);
+    const double travel = length(v0) * dt;
+    const int substeps = std::clamp(static_cast<int>(std::ceil(travel / maxStepLength)), 1, maxSubsteps);
+    const double h = dt / substeps;
+
+    Vec2 k2 = v0;
+    for (int i = 0; i < substeps; ++i) {
+        const Vec2 k1 = (i == 0) ? v0 : velocity(p);
+        k2 = velocity(p + k1 * (0.5 * h));
+        p += k2 * h;
+    }
+    return length(k2);
+}
+
 struct Particle {
     Vec2 pos;
     double age = 0.0;
@@ -61,20 +80,7 @@ private:
 template <typename VelocityFn, typename ValidFn>
 void ParticleSystem::step(double dt, const VelocityFn& velocity, const ValidFn& isValid) {
     for (Particle& p : m_particles) {
-        const Vec2 v0 = velocity(p.pos);
-        const double travel = length(v0) * dt;
-        const int substeps =
-            std::clamp(static_cast<int>(std::ceil(travel / m_settings.maxStepLength)), 1, m_settings.maxSubsteps);
-        const double h = dt / substeps;
-
-        // Midpoint RK2.
-        Vec2 k2 = v0;
-        for (int i = 0; i < substeps; ++i) {
-            const Vec2 k1 = (i == 0) ? v0 : velocity(p.pos);
-            k2 = velocity(p.pos + k1 * (0.5 * h));
-            p.pos += k2 * h;
-        }
-        p.speed = length(k2);
+        p.speed = advect(p.pos, dt, velocity, m_settings.maxStepLength, m_settings.maxSubsteps);
         p.age += dt;
 
         const bool finite = std::isfinite(p.pos.x) && std::isfinite(p.pos.y);

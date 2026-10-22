@@ -6,9 +6,15 @@ sector flow) and straight symmetry walls, draws evenly spaced streamlines with d
 equipotential lines and velocity-magnitude contours, and animates tracer particles on the GPU.
 
 - Left toolbar: one icon per element type (hover for the name); a click opens a parameter dialog
-  with Apply / Cancel.
+  with Apply / Cancel. Below them, the dye rake tool.
 - Main plot: labelled (x, y) axes, scroll to zoom, drag to pan; streamlines are recomputed after
-  every add, edit or delete. Hover an element to name it, double-click it to edit it.
+  every add, edit or delete. Hover an element to name it, double-click it to edit it, or **drag it**
+  to move it: the streamlines, contours, stagnation points and body surfaces follow live while the
+  particles keep flowing.
+- **Dye rakes**: drag a line across the plot and its emitters release continuous, pulsed dye
+  streaks that the flow carries away (streaklines; in steady flow they trace the streamlines and
+  the pulse spacing shows the speed). Rakes can be moved, turned and edited, and are saved with
+  the scene.
 - **Elements** menu: every element with its parameters, each with Edit and Delete.
 - **Examples** menu: the scenes in `examples/` (cylinder, lifting cylinder, Rankine bodies, corner
   flow, ...) built into the exe; one click loads the elements, view and plot settings.
@@ -16,7 +22,7 @@ equipotential lines and velocity-magnitude contours, and animates tracer particl
   PNG image of the plot, CSV field data (u, v, |V|, φ, ψ, Cp on a grid), CSV streamline and
   equipotential polylines, CSV surface Cp of the bodies. The exports also run from the command line.
 - **View** menu: streamline density, arrows, wall images, equipotential lines, a |V| or Cp
-  background, surface pressure, tracer particles.
+  background, surface pressure, stagnation point markers, tracer particles.
 - **Surface pressure**: the bodies (cylinder, Rankine oval, half-body, ...) are found from their
   stagnation points; their surfaces are coloured by Cp with pressure arrows, and a side panel plots
   Cp along the surface (exact curve for a cylinder) with the integrated lift and drag compared with

@@ -15,7 +15,7 @@ The window has four parts:
 
 | Part | What it does |
 |---|---|
-| Toolbar (left) | One icon per element type. Hover for its name, click to add one. |
+| Toolbar (left) | One icon per element type. Hover for its name, click to add one. Below them, the dye rake tool. |
 | Plot (centre) | The flow in the (x, y) plane: streamlines, arrows, element markers. |
 | Menu bar (top) | **File** (including exports), **Examples**, **Elements** and **View** menus. |
 | Status bar (bottom) | Velocity under the mouse, streamline count, wall check, warnings. |
@@ -29,6 +29,13 @@ The window has four parts:
 - Hover the plot to read x, y, the velocity (u, v), the speed |V| and, when a uniform flow is
   present, the pressure coefficient Cp = 1 − |V|²/U∞² in the status bar.
 - Hover an element marker to see its parameters; **double-click** it to edit it.
+- **Drag** a marker to move the element. Everything follows live while you drag: streamlines,
+  equipotentials, contours, stagnation points, body surfaces and the Cp panel. The tracer particles
+  keep flowing through the changing field. Positions are rounded to about one pixel; hold **Shift**
+  to snap to a coarser grid (0.1 at the default zoom). **Esc** during a drag puts the element back.
+  A wall is moved parallel to itself (grab it anywhere along its line). A uniform flow has no
+  position, so it cannot be dragged; double-click its arrow to change it.
+- Stagnation points (V = 0) are marked with red diamonds; hover one to read its coordinates.
 - Regions outside a sector flow's wedge are darkened: the flow is not defined there.
 
 ## Adding flow elements
@@ -70,8 +77,30 @@ The **View** menu holds the plot settings, which are saved with the scene:
     (stagnation) down to the Cp of twice the typical speed. Lower values, as next to a singular
     point, use the bottom band. Cp needs a uniform flow; without one, the scale box says so.
 - **Surface pressure**: see the next section.
+- **Stagnation points**: the diamond markers. They are found by Newton's method on the analytic
+  complex velocity, so they sit exactly where W = 0.
 - **Tracer particles** and **Particle trails**: animated particles coloured by speed (blue slow,
   red fast). They are a visual aid only; the streamlines are the result.
+
+## Dye rakes
+
+A dye rake is a line of dye emitters, as in a water or smoke tunnel. Click the rake tool at the
+bottom of the toolbar, then drag across the plot to draw the rake (a plain click places a vertical
+one). Each emitter releases dye continuously, and the dye is carried by the flow. The resulting
+filaments are streaklines. In a steady flow these coincide with the streamlines through the
+emitters, so the dye shows the same curves as the streamlines, but you can watch it travel.
+
+The dye is drawn in pulses of half a second, alternately bright and dim. Each pulse holds fluid
+that left the emitter during the same time span, so pulses stretch where the flow is fast and
+bunch up where it is slow, for example ahead of a stagnation point. Dye fades out after 15 seconds
+of animation and disappears where it leaves the view or runs into a singular point.
+
+- Drag a rake's line to move it, or drag one of its square end handles to turn or stretch it.
+- Right-click a rake to change its number of emitters (1–64) or delete it. **Delete**
+  removes the rake under the mouse.
+- **Elements → Delete all dye rakes** removes them all; **File → Clear All** removes rakes along
+  with the elements.
+- Rakes change nothing in the flow; they are only a visualization. They are saved with the scene.
 
 ## Surface pressure and forces
 
@@ -117,7 +146,7 @@ approximate.
 ## Saving and loading configurations
 
 **File → Save** (Ctrl+S) and **Save As...** (Ctrl+Shift+S) write the scene as a JSON file: every
-element with its parameters, the walls, the current view and the View-menu settings. **File →
+element with its parameters, the walls, the dye rakes, the current view and the View-menu settings. **File →
 Open...** (Ctrl+O) restores it exactly. **File → New** (Ctrl+N) starts an empty scene with
 default settings. The title bar shows `*` when there are unsaved changes, and New, Open, the
 Examples menu and Quit ask before discarding them. An example opens as an unsaved copy, so **Save**

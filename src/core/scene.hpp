@@ -1,5 +1,5 @@
-// scene.hpp: what the user builds, edits and saves: the element list (flows and symmetry walls)
-// plus the plot settings, and the flow model derived from it.
+// scene.hpp: what the user builds, edits and saves: the element list (flows and symmetry walls),
+// the dye rakes and the plot settings, and the flow model derived from it.
 //
 // buildFlowModel() turns a scene into the field that is actually evaluated: every flow element,
 // the wall images of its sources, vortices and doublets, and its uniform flows reduced to what the
@@ -7,6 +7,7 @@
 // easy to misread (coincident singularities, elements on a wall, truncated images, ...).
 #pragma once
 
+#include "core/dye.hpp"
 #include "core/flow_element.hpp"
 #include "core/flow_field.hpp"
 #include "core/image_system.hpp"
@@ -41,6 +42,13 @@ std::string describe(const SceneElement& element);
 // Why the parameters are invalid, or nullopt if they are fine.
 std::optional<std::string> sceneElementError(const SceneElement& element);
 
+// The point an element is drawn at and dragged by: the position of a source, vortex or doublet, the
+// vertex of a sector, the reference point of a wall. nullopt for a uniform flow, which has none.
+std::optional<Vec2> anchorPoint(const SceneElement& element);
+
+// `element` translated so that its anchor point is at `position` (a uniform flow is unchanged).
+SceneElement movedTo(SceneElement element, Vec2 position);
+
 // Filled contour bands drawn under the streamlines.
 enum class Background { None, Speed, PressureCoefficient };
 
@@ -53,12 +61,14 @@ struct PlotSettings {
     bool showEquipotentials = false;
     Background background = Background::None;
     bool showSurfacePressure = false; // body surfaces coloured by Cp, pressure arrows and the Cp panel
+    bool showStagnationPoints = true;
     bool showParticles = true;
     bool particleTrails = true;
 };
 
 struct Scene {
     std::vector<SceneElement> elements;
+    std::vector<DyeRake> rakes; // flow visualization only; they do not change the flow
     PlotSettings plot;
 };
 

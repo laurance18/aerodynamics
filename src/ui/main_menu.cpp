@@ -57,6 +57,8 @@ void drawViewMenu(PlotSettings& plot, MainMenuActions& actions) {
     ImGui::SetItemTooltip("Find the bodies (closed or half-bodies bounded by dividing streamlines), colour their\n"
                           "surfaces by Cp with pressure arrows, and open the panel with Cp along the surface\n"
                           "and the integrated lift and drag.");
+    actions.plotChanged |= ImGui::Checkbox("Stagnation points", &plot.showStagnationPoints);
+    ImGui::SetItemTooltip("Mark the points where the velocity is zero (Cp = 1) with diamonds.");
     actions.plotChanged |= ImGui::Checkbox("Tracer particles", &plot.showParticles);
     ImGui::BeginDisabled(!plot.showParticles);
     actions.plotChanged |= ImGui::Checkbox("Particle trails", &plot.particleTrails);
@@ -94,8 +96,10 @@ MainMenuActions drawMainMenu(const Scene& scene, PlotSettings& plot, bool canRel
             ImGui::SetItemTooltip("x, y, arc length, x/c, angle and Cp (and the exact Cp for a cylinder) at every\n"
                                   "point of every body surface found in the flow.");
             ImGui::Separator();
-            if (ImGui::MenuItem("Clear All", nullptr, false, !scene.elements.empty())) actions.clearAll = true;
-            ImGui::SetItemTooltip("Remove every element but keep the view and plot settings.");
+            if (ImGui::MenuItem("Clear All", nullptr, false, !scene.elements.empty() || !scene.rakes.empty())) {
+                actions.clearAll = true;
+            }
+            ImGui::SetItemTooltip("Remove every element and dye rake but keep the view and plot settings.");
             ImGui::Separator();
             if (canReloadShaders && ImGui::MenuItem("Reload shaders", "Ctrl+R")) actions.reloadShaders = true;
             if (ImGui::MenuItem("Quit", "Alt+F4")) actions.quit = true;
