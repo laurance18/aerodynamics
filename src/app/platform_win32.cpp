@@ -4,6 +4,8 @@
 
 #include <commdlg.h>
 #include <shellapi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
@@ -11,12 +13,18 @@
 
 #include <array>
 #include <cstdio>
+#include <format>
 #include <string>
+#include <vector>
 
 namespace pfl {
 namespace {
 
 constexpr wchar_t k_sceneFilter[] = L"Flow scenes (*.json)\0*.json\0All files (*.*)\0*.*\0";
+constexpr wchar_t k_pngFilter[] = L"PNG images (*.png)\0*.png\0All files (*.*)\0*.*\0";
+constexpr wchar_t k_csvFilter[] = L"CSV files (*.csv)\0*.csv\0All files (*.*)\0*.*\0";
+
+using Microsoft::WRL::ComPtr;
 
 std::wstring widen(std::string_view utf8) {
     if (utf8.empty()) return {};
@@ -28,18 +36,20 @@ std::wstring widen(std::string_view utf8) {
 
 HWND ownerWindow(GLFWwindow* window) { return window != nullptr ? glfwGetWin32Window(window) : nullptr; }
 
-// Runs GetOpenFileNameW / GetSaveFileNameW with the scene filter. `initial` pre-fills the name.
-std::optional<std::filesystem::path> fileDialog(GLFWwindow* owner, bool save, const std::filesystem::path& initial) {
+// Runs GetOpenFileNameW / GetSaveFileNameW with `filter`. `initial` pre-fills the name.
+std::optional<std::filesystem::path> fileDialog(GLFWwindow* owner, bool save, const std::filesystem::path& initial,
+                                                const wchar_t* filter = k_sceneFilter,
+                                                const wchar_t* extension = L"json") {
     std::array<wchar_t, 4096> buffer{};
     initial.native().copy(buffer.data(), buffer.size() - 1);
 
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = ownerWindow(owner);
-    ofn.lpstrFilter = k_sceneFilter;
+    ofn.lpstrFilter = filter;
     ofn.lpstrFile = buffer.data();
     ofn.nMaxFile = static_cast<DWORD>(buffer.size());
-    ofn.lpstrDefExt = L"json";
+    ofn.lpstrDefExt = extension;
     ofn.Flags = OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST |
                 (save ? OFN_OVERWRITEPROMPT : static_cast<DWORD>(OFN_FILEMUSTEXIST));
     const BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
@@ -67,21 +77,96 @@ void showErrorMessage(GLFWwindow* owner, std::string_view title, std::string_vie
     MessageBoxW(ownerWindow(owner), widen(message).c_str(), widen(title).c_str(), MB_OK | MB_ICONWARNING);
 }
 
-std::optional<std::filesystem::path> commandLineFile() {
+CommandLine parseCommandLine() {
     // CommandLineToArgvW gives Unicode arguments, unlike main()'s argv.
+    CommandLine result;
     int count = 0;
     LPWSTR* args = CommandLineToArgvW(GetCommandLineW(), &count);
-    if (args == nullptr) return std::nullopt;
-    std::optional<std::filesystem::path> path;
-    if (count > 1) path = std::filesystem::path(args[1]);
+    if (args == nullptr) return result;
+    for (int i = 1; i < count && result.error.empty(); ++i) {
+        const std::wstring arg = args[i];
+        std::optional<std::filesystem::path>* target = nullptr;
+        if (arg == L"--export-image") target = &result.exportImage;
+        if (arg == L"--export-field") target = &result.exportField;
+        if (arg == L"--export-lines") target = &result.exportLines;
+
+        if (target != nullptr) {
+            if (i + 1 < count) {
+                *target = std::filesystem::path(args[++i]);
+            } else {
+                result.error = std::filesystem::path(arg).string() + " needs a file name.";
+            }
+        } else if (arg.starts_with(L"--")) {
+            result.error = "Unknown option " + std::filesystem::path(arg).string() +
+                           ".\n\nUsage: PotentialFlowLab.exe [scene.json] [--export-image out.png] "
+                           "[--export-field out.csv] [--export-lines out.csv]";
+        } else if (!result.scene) {
+            result.scene = std::filesystem::path(arg);
+        }
+    }
     LocalFree(args);
-    return path;
+    return result;
 }
 
 std::optional<std::filesystem::path> showOpenSceneDialog(GLFWwindow* owner) { return fileDialog(owner, false, {}); }
 
 std::optional<std::filesystem::path> showSaveSceneDialog(GLFWwindow* owner, const std::filesystem::path& suggested) {
     return fileDialog(owner, true, suggested);
+}
+
+std::optional<std::filesystem::path> showSavePngDialog(GLFWwindow* owner, const std::filesystem::path& suggested) {
+    return fileDialog(owner, true, suggested, k_pngFilter, L"png");
+}
+
+std::optional<std::filesystem::path> showSaveCsvDialog(GLFWwindow* owner, const std::filesystem::path& suggested) {
+    return fileDialog(owner, true, suggested, k_csvFilter, L"csv");
+}
+
+bool writePng(const std::filesystem::path& path, int width, int height, const std::uint8_t* rgba, std::string& error) {
+    // COM may already be initialised on this thread (e.g. by a file dialog); balance only our own call.
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool uninitialize = SUCCEEDED(init);
+
+    // WIC's PNG encoder takes 24-bit BGR rows.
+    const UINT stride = static_cast<UINT>(width) * 3;
+    const std::size_t pixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    std::vector<BYTE> bgr(3 * pixels);
+    for (std::size_t i = 0; i < pixels; ++i) {
+        bgr[3 * i + 0] = rgba[4 * i + 2];
+        bgr[3 * i + 1] = rgba[4 * i + 1];
+        bgr[3 * i + 2] = rgba[4 * i + 0];
+    }
+
+    HRESULT hr = S_OK;
+    {
+        ComPtr<IWICImagingFactory> factory;
+        ComPtr<IWICStream> stream;
+        ComPtr<IWICBitmapEncoder> encoder;
+        ComPtr<IWICBitmapFrameEncode> frame;
+        WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
+        hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+        if (SUCCEEDED(hr)) hr = factory->CreateStream(&stream);
+        if (SUCCEEDED(hr)) hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
+        if (SUCCEEDED(hr)) hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
+        if (SUCCEEDED(hr)) hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+        if (SUCCEEDED(hr)) hr = encoder->CreateNewFrame(&frame, nullptr);
+        if (SUCCEEDED(hr)) hr = frame->Initialize(nullptr);
+        if (SUCCEEDED(hr)) hr = frame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height));
+        if (SUCCEEDED(hr)) hr = frame->SetPixelFormat(&format);
+        if (SUCCEEDED(hr) && format != GUID_WICPixelFormat24bppBGR) hr = E_FAIL; // encoder wants another layout
+        if (SUCCEEDED(hr)) hr = frame->WritePixels(static_cast<UINT>(height), stride, static_cast<UINT>(bgr.size()), bgr.data());
+        if (SUCCEEDED(hr)) hr = frame->Commit();
+        if (SUCCEEDED(hr)) hr = encoder->Commit();
+    } // release the COM objects before CoUninitialize
+    if (uninitialize) CoUninitialize();
+
+    if (FAILED(hr)) {
+        error = std::format("Could not write the PNG file (error 0x{:08X}). Is the folder writable, or is the file "
+                            "open in another program?",
+                            static_cast<unsigned long>(hr));
+        return false;
+    }
+    return true;
 }
 
 } // namespace pfl

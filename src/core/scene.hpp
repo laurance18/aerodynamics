@@ -47,6 +47,8 @@ struct PlotSettings {
     bool showArrows = true;
     double arrowSpacingPx = 110.0; // screen distance between direction arrows along a streamline
     bool showImages = true;        // draw the wall images of elements
+    bool showEquipotentials = false;
+    bool showSpeedContours = false; // filled |V| bands under the streamlines
     bool showParticles = true;
     bool particleTrails = true;
 };

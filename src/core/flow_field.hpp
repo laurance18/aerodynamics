@@ -37,4 +37,20 @@ struct FlowField {
 // singularity): a scale for colour maps, animation speed and stagnation thresholds. 0 if no flow.
 double typicalSpeed(const FlowField& field, const Rect& region, int gridSize = 24);
 
+// A scalar sampled at the cell centres of a columns x rows grid over `bounds`; row 0 is at
+// bounds.min.y.
+struct ScalarGrid {
+    Rect bounds;
+    int columns = 0;
+    int rows = 0;
+    std::vector<double> values; // row by row
+
+    double at(int i, int j) const {
+        return values[static_cast<std::size_t>(j) * static_cast<std::size_t>(columns) + static_cast<std::size_t>(i)];
+    }
+};
+
+// |V| on a grid: NaN outside the flow domain, +infinity within singularRadius of a singular point.
+ScalarGrid sampleSpeed(const FlowField& field, const Rect& bounds, int columns, int rows, double singularRadius);
+
 } // namespace pfl

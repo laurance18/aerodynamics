@@ -30,6 +30,10 @@ void drawViewMenu(PlotSettings& plot, MainMenuActions& actions) {
     ImGui::EndDisabled();
     actions.plotChanged |= ImGui::Checkbox("Show wall images", &plot.showImages);
     ImGui::SetItemTooltip("Draw the mirrored sources, vortices and doublets that enforce the symmetry walls.");
+    actions.plotChanged |= ImGui::Checkbox("Equipotential lines", &plot.showEquipotentials);
+    ImGui::SetItemTooltip("Lines of constant velocity potential φ, crossing every streamline at right angles.");
+    actions.plotChanged |= ImGui::Checkbox("Speed contours |V|", &plot.showSpeedContours);
+    ImGui::SetItemTooltip("Filled bands of velocity magnitude, from 0 to twice the typical speed in the view.");
     actions.plotChanged |= ImGui::Checkbox("Tracer particles", &plot.showParticles);
     ImGui::BeginDisabled(!plot.showParticles);
     actions.plotChanged |= ImGui::Checkbox("Particle trails", &plot.particleTrails);
@@ -55,6 +59,14 @@ MainMenuActions drawMainMenu(const Scene& scene, PlotSettings& plot, bool canRel
             if (ImGui::MenuItem("Open...", "Ctrl+O")) actions.open = true;
             if (ImGui::MenuItem("Save", "Ctrl+S")) actions.save = true;
             if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) actions.saveAs = true;
+            ImGui::Separator();
+            const bool hasFlow = !scene.elements.empty();
+            if (ImGui::MenuItem("Export image (PNG)...", nullptr, false, hasFlow)) actions.exportImage = true;
+            ImGui::SetItemTooltip("Save the plot, axes included, as it is shown now.");
+            if (ImGui::MenuItem("Export field data (CSV)...", nullptr, false, hasFlow)) actions.exportField = true;
+            ImGui::SetItemTooltip("x, y, u, v, |V|, φ, ψ and Cp on a 201-column grid over the current view.");
+            if (ImGui::MenuItem("Export lines (CSV)...", nullptr, false, hasFlow)) actions.exportLines = true;
+            ImGui::SetItemTooltip("The points of every streamline and equipotential line shown now.");
             ImGui::Separator();
             if (ImGui::MenuItem("Clear All", nullptr, false, !scene.elements.empty())) actions.clearAll = true;
             ImGui::SetItemTooltip("Remove every element but keep the view and plot settings.");

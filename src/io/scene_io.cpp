@@ -83,6 +83,8 @@ json plotToJson(const PlotSettings& p) {
             {"arrows", p.showArrows},
             {"arrow_spacing_px", p.arrowSpacingPx},
             {"show_images", p.showImages},
+            {"equipotentials", p.showEquipotentials},
+            {"speed_contours", p.showSpeedContours},
             {"particles", p.showParticles},
             {"particle_trails", p.particleTrails}};
 }
@@ -98,6 +100,8 @@ PlotSettings plotFromJson(const json& j) {
     p.showArrows = j.value("arrows", p.showArrows);
     p.arrowSpacingPx = j.value("arrow_spacing_px", p.arrowSpacingPx);
     p.showImages = j.value("show_images", p.showImages);
+    p.showEquipotentials = j.value("equipotentials", p.showEquipotentials);
+    p.showSpeedContours = j.value("speed_contours", p.showSpeedContours);
     p.showParticles = j.value("particles", p.showParticles);
     p.particleTrails = j.value("particle_trails", p.particleTrails);
     return p;

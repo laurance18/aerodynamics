@@ -1,13 +1,18 @@
 #include "core/image_system.hpp"
 #include "core/scene.hpp"
 #include "core/streamline.hpp"
+#include "io/data_export.hpp"
 #include "io/scene_io.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <numbers>
+#include <sstream>
+#include <string>
+#include <vector>
 
 using namespace pfl;
 
@@ -136,6 +141,112 @@ TEST_CASE("streamlines stay inside a sector's wedge") {
     }
 }
 
+TEST_CASE("equipotential lines cross the streamlines at right angles and keep phi constant") {
+    // Cylinder of radius 1 in a uniform flow at 20 degrees.
+    const double alpha = 20.0 * deg;
+    const FlowField field{.elements = {UniformFlow{.speed = 1.0, .angle = alpha},
+                                       Doublet{.strength = 1.0, .angle = alpha}}};
+    StreamlineSettings settings;
+    settings.bounds = {{-3.0, -3.0}, {3.0, 3.0}};
+    settings.separation = 0.25;
+    settings.arrowSpacing = 0.0;
+    settings.orthogonal = true;
+    const StreamlineSet set = computeStreamlines(field, settings);
+
+    REQUIRE(set.lines.size() > 20);
+    CHECK(set.arrows.empty());
+    // Checked in the physical flow (outside the cylinder), away from the stagnation points on its
+    // surface, where the direction field turns quickly and RK4 with a fixed step is least accurate.
+    const auto checked = [](Vec2 p) { return length(p) > 1.2; };
+    // phi changes by about U * separation between neighbouring lines; along a line it must stay put.
+    const double spacing = 1.0 * settings.separation;
+    int checkedLines = 0;
+    for (const auto& line : set.lines) {
+        if (!std::ranges::all_of(line, checked)) continue;
+        ++checkedLines;
+        const double phi0 = field.complexPotential(line.front()).real();
+        double drift = 0.0;
+        for (std::size_t i = 0; i + 1 < line.size(); ++i) {
+            const Vec2 d = line[i + 1] - line[i];
+            const Vec2 v = field.velocity((line[i] + line[i + 1]) * 0.5);
+            if (length(d) <= 0.0) continue;
+            CHECK(std::abs(dot(d / length(d), v / length(v))) < 1e-3); // each step crosses the flow at 90 deg
+            drift = std::max(drift, std::abs(field.complexPotential(line[i + 1]).real() - phi0));
+        }
+        INFO("line from (" << line.front().x << ", " << line.front().y << "), " << line.size() << " points");
+        CHECK(drift < 1e-4 * spacing);
+    }
+    CHECK(checkedLines > 10);
+}
+
+TEST_CASE("equipotential lines of a vortex are radial, despite phi's branch cut") {
+    const Vec2 centre{0.5, -0.25};
+    const FlowField field{.elements = {Vortex{.circulation = 3.0, .position = centre}}};
+    StreamlineSettings settings;
+    settings.bounds = {{-2.0, -2.0}, {2.0, 2.0}};
+    settings.separation = 0.3;
+    settings.arrowSpacing = 0.0;
+    settings.orthogonal = true;
+    const StreamlineSet set = computeStreamlines(field, settings);
+
+    REQUIRE(set.lines.size() >= 8);
+    for (const auto& line : set.lines) {
+        const Vec2 ray = (line.back() - centre) / length(line.back() - centre);
+        for (const Vec2 p : line) CHECK(std::abs(cross(p - centre, ray)) < 1e-9);
+    }
+}
+
+TEST_CASE("speed grid: |V| inside the domain, NaN outside, infinite at singular points") {
+    const ScalarGrid uniform = sampleSpeed({.elements = {UniformFlow{.speed = 2.0, .angle = 1.0}}},
+                                           {{-1.0, -1.0}, {1.0, 1.0}}, 4, 3, 0.01);
+    REQUIRE(uniform.values.size() == 12);
+    for (const double v : uniform.values) CHECK(v == doctest::Approx(2.0));
+
+    // 2 x 2 cells over [-1, 1]^2: centres at (+-0.5, +-0.5). Only (0.5, 0.5) is inside a 90 degree wedge.
+    const ScalarGrid sector = sampleSpeed({.elements = {SectorFlow{.strength = 1.0, .wall1 = 0.0, .wall2 = 90.0 * deg}}},
+                                          {{-1.0, -1.0}, {1.0, 1.0}}, 2, 2, 0.01);
+    CHECK(std::isnan(sector.at(0, 0)));
+    CHECK(std::isnan(sector.at(1, 0)));
+    CHECK(std::isnan(sector.at(0, 1)));
+    CHECK(sector.at(1, 1) == doctest::Approx(2.0 * length(Vec2{0.5, 0.5}))); // |W| = 2 V r for n = 2
+
+    const ScalarGrid source = sampleSpeed({.elements = {SourceSink{.strength = 1.0}}}, {{-1.0, -1.0}, {1.0, 1.0}}, 1, 1, 0.01);
+    CHECK(std::isinf(source.at(0, 0)));
+}
+
+TEST_CASE("field and line CSV exports") {
+    const Scene scene{.elements = {UniformFlow{.speed = 2.0, .angle = 90.0 * deg},
+                                   SectorFlow{.strength = 1.0, .vertex = {0.0, 0.0}, .wall1 = 0.0, .wall2 = 180.0 * deg}}};
+    const FlowModel model = buildFlowModel(scene);
+    const std::string csv = fieldCsv(model, {{-1.0, -1.0}, {1.0, 1.0}}, 3, 2);
+
+    std::vector<std::string> rows;
+    std::istringstream in(csv);
+    for (std::string row; std::getline(in, row);) rows.push_back(row);
+    REQUIRE(rows.size() == 7);
+    CHECK(rows[0] == "x,y,u,v,speed,phi,psi,cp");
+    // Bottom row (y = -1) is outside the upper half-plane wedge.
+    CHECK(rows[1] == "-1,-1,NaN,NaN,NaN,NaN,NaN,NaN");
+    // (1, 1): uniform (0, 2) plus sector z^1 (1, 0): u = 1, v = 2, phi = 2 y + x, psi = -2 x + y, Cp = 1 - 5/4.
+    std::vector<double> values;
+    std::istringstream row(rows[6]);
+    for (std::string cell; std::getline(row, cell, ',');) values.push_back(std::stod(cell));
+    const std::vector<double> expected{1.0, 1.0, 1.0, 2.0, std::sqrt(5.0), 3.0, -1.0, -0.25};
+    REQUIRE(values.size() == expected.size());
+    for (std::size_t i = 0; i < values.size(); ++i) CHECK(values[i] == doctest::Approx(expected[i]).epsilon(1e-15));
+
+    StreamlineSet lines;
+    lines.lines = {{{0.0, 0.0}, {1.0, 0.5}}};
+    StreamlineSet equipotentials;
+    equipotentials.lines = {{{2.0, 2.0}}, {{3.0, -1.0}}};
+    CHECK(linesCsv(lines, equipotentials) ==
+          "kind,line,x,y\n"
+          "streamline,1,0,0\n"
+          "streamline,1,1,0.5\n"
+          "equipotential,1,2,2\n"
+          "equipotential,2,3,-1\n");
+}
+
 TEST_CASE("scenes survive a save/load round trip") {
     Scene scene;
     scene.elements = {UniformFlow{.speed = 1.5, .angle = 30.0 * deg},
@@ -148,6 +259,8 @@ TEST_CASE("scenes survive a save/load round trip") {
     scene.plot.streamlineDensity = 31;
     scene.plot.showArrows = false;
     scene.plot.showParticles = false;
+    scene.plot.showEquipotentials = true;
+    scene.plot.showSpeedContours = true;
 
     const SceneLoadResult loaded = sceneFromJson(sceneToJson(scene));
     REQUIRE_MESSAGE(loaded.scene.has_value(), loaded.error);
@@ -169,6 +282,8 @@ TEST_CASE("scenes survive a save/load round trip") {
     CHECK(copy.plot.streamlineDensity == 31);
     CHECK_FALSE(copy.plot.showArrows);
     CHECK_FALSE(copy.plot.showParticles);
+    CHECK(copy.plot.showEquipotentials);
+    CHECK(copy.plot.showSpeedContours);
 }
 
 TEST_CASE("invalid scene files are rejected with a message") {

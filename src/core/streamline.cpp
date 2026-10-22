@@ -86,7 +86,7 @@ public:
         const Vec2 v = m_field.velocity(p);
         const double speed = length(v);
         if (!(speed > m_minSpeed) || !std::isfinite(speed)) return std::nullopt;
-        return v / speed;
+        return m_settings.orthogonal ? perp(v / speed) : v / speed;
     }
 
     // One RK4 step of arc length h (negative h integrates upstream).

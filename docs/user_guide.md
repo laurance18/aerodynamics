@@ -15,7 +15,7 @@ The window has four parts:
 |---|---|
 | Toolbar (left) | One icon per element type. Hover for its name, click to add one. |
 | Plot (centre) | The flow in the (x, y) plane: streamlines, arrows, element markers. |
-| Menu bar (top) | **File**, **Elements** and **View** menus. |
+| Menu bar (top) | **File** (including exports), **Elements** and **View** menus. |
 | Status bar (bottom) | Velocity under the mouse, streamline count, wall check, warnings. |
 
 ## The flow view
@@ -50,13 +50,19 @@ To change or remove an element later, open the **Elements** menu: every element 
 its parameters; hover one and choose **Edit...** or **Delete**. **Delete all** (or **File → Clear
 All**) removes every element but keeps the view.
 
-## Streamlines and tracer particles
+## Streamlines, equipotentials, speed contours and tracer particles
 
 The **View** menu holds the plot settings, which are saved with the scene:
 
 - **Streamline density**: number of streamlines across the height of the view.
 - **Direction arrows** and **Arrow spacing** (screen pixels between arrows on a line).
 - **Show wall images**: draw the mirrored elements that enforce the symmetry walls (faded).
+- **Equipotential lines** (orange): lines of constant velocity potential φ. They cross every
+  streamline at right angles and use the same spacing, so in regions of typical speed the two
+  families form roughly square cells.
+- **Speed contours |V|**: filled bands of velocity magnitude from 0 to twice the typical (median)
+  speed in the view, with a colour scale in the top-right corner. Faster regions, such as those
+  next to a source or vortex, use the top band.
 - **Tracer particles** and **Particle trails**: animated particles coloured by speed (blue slow,
   red fast). They are a visual aid only; the streamlines are the result.
 
@@ -86,6 +92,34 @@ ask before discarding them.
 
 Files are plain text and can be edited by hand; angles are stored in degrees. A file with an
 invalid element (for example θ₂ ≤ θ₁) is rejected with a message naming the element.
+
+## Exporting images and data
+
+The **File** menu has three exports. Each one asks where to save the file.
+
+| Export | What it writes |
+|---|---|
+| **Export image (PNG)...** | The plot, axes included, exactly as shown (hover highlights are left out). |
+| **Export field data (CSV)...** | `x, y, u, v, speed, phi, psi, cp` at the nodes of a 201-column grid over the current view. |
+| **Export lines (CSV)...** | `kind, line, x, y`: every point of every streamline and equipotential line shown. |
+
+In the field file, `NaN` marks nodes outside the flow domain or on a singular point, and `cp` is
+`NaN` when there is no uniform flow. φ is multivalued around a vortex and ψ around a source. The
+file uses the principal branch, so φ jumps by Γ (and ψ by Λ) across the line running in −x from
+the element. The files open directly in Excel, MATLAB (`readtable`) or Python
+(`numpy.genfromtxt(..., names=True)`).
+
+### From the command line
+
+The same exports can be run without the interface, for example to regenerate figures:
+
+```powershell
+PotentialFlowLab.exe examples\cylinder.json --export-image cylinder.png --export-field cylinder.csv --export-lines lines.csv
+```
+
+The window opens briefly, the scene is drawn, the files are written and the program exits. The
+exit code is 0 on success and 1 if a file could not be written. `tools/report_figures.py` uses this
+to produce every figure and validation number in the report.
 
 ## Troubleshooting
 

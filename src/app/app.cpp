@@ -4,6 +4,7 @@
 #include "core/particles.hpp"
 #include "core/scene.hpp"
 #include "core/streamline.hpp"
+#include "io/data_export.hpp"
 #include "io/scene_io.hpp"
 #include "render/gl.hpp"
 #include "render/gl_debug.hpp"
@@ -24,11 +25,14 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace pfl {
 namespace {
@@ -42,6 +46,19 @@ constexpr float k_fontSize = 17.0f;
 // Streamlines: traced a little beyond the view so panning shows lines at the edges.
 constexpr double k_streamlineMargin = 0.05;
 constexpr double k_singularRadiusPx = 3.0; // lines stop this many pixels from a singular point
+
+// Speed contours: |V| is sampled on cells this many pixels wide; the colour scale tops out at this
+// multiple of the typical speed in the view.
+constexpr float k_speedCellPx = 4.0f;
+constexpr double k_speedScaleFactor = 2.0;
+
+// Field CSV export: grid nodes across the view (rows follow from the aspect ratio).
+constexpr int k_exportColumns = 201;
+
+// Image export: frames drawn after the menu or file dialog closes, so neither is in the picture.
+constexpr int k_captureDelayFrames = 3;
+// Command-line exports: frames drawn first, so the plot layout and streamlines have settled.
+constexpr int k_batchWarmupFrames = 6;
 
 // Tracer particles.
 constexpr std::size_t k_particleCount = 4'000;
@@ -86,6 +103,7 @@ public:
 
     bool init();
     void run();
+    int exitCode() const { return m_exitCode; }
 
 private:
     bool createWindow();
@@ -106,6 +124,17 @@ private:
     void rebuildModel();
     void updateTitle();
     void onCloseRequested();
+
+    // Exports.
+    std::filesystem::path suggestedExportPath(const char* suffix) const;
+    void exportImage();
+    void exportField();
+    void exportLines();
+    bool writePlotImage(const std::filesystem::path& path, std::string& error) const;
+    bool writeFieldCsv(const std::filesystem::path& path, std::string& error) const;
+    bool writeLinesCsv(const std::filesystem::path& path, std::string& error) const;
+    void captureIfDue();
+    void runBatchStep();
 
     // Per-frame work after the UI.
     void updateStreamlines();
@@ -133,12 +162,17 @@ private:
     PlotView m_plotView;
     ParameterDialog m_dialog;
     PlotViewResult m_plot; // plot geometry from the latest frame
+    ImVec2 m_plotWindowPos{0.0f, 0.0f};  // the plot window (axes included), for image export
+    ImVec2 m_plotWindowSize{0.0f, 0.0f};
     DiscardingAction m_pendingAction = DiscardingAction::None;
     bool m_confirmDiscard = false;
     bool m_quitConfirmed = false;
 
-    // Streamlines, recomputed when the flow, the view or the plot settings change.
+    // Streamlines, equipotentials and speed contours, recomputed when the flow, the view or the plot
+    // settings change.
     StreamlineSet m_streamlines;
+    StreamlineSet m_equipotentials;
+    SpeedMap m_speedMap;
     std::optional<Rect> m_streamlineView;
     bool m_streamlinesDirty = true;
 
@@ -147,6 +181,18 @@ private:
     double m_referenceSpeed = 0.0;
     std::optional<Rect> m_particleView;
     bool m_respawnParticles = true;
+
+    // A pending File > Export image: written once the frame no longer shows the menu or dialog.
+    struct ImageCapture {
+        std::filesystem::path path;
+        int framesLeft = k_captureDelayFrames;
+    };
+    std::optional<ImageCapture> m_imageCapture;
+
+    // Command-line exports (then quit), if any were requested.
+    CommandLine m_commandLine;
+    int m_batchFrames = 0;
+    int m_exitCode = 0;
 };
 
 bool App::init() {
@@ -161,12 +207,18 @@ bool App::init() {
     initImGui();
     setScene(Scene{}, {});
 
-    if (const std::optional<std::filesystem::path> path = commandLineFile()) {
-        SceneLoadResult result = loadSceneFile(*path);
+    m_commandLine = parseCommandLine();
+    if (!m_commandLine.error.empty()) {
+        showErrorMessage(m_window, "Command line", m_commandLine.error);
+        if (m_commandLine.batch()) return false;
+    }
+    if (m_commandLine.scene) {
+        SceneLoadResult result = loadSceneFile(*m_commandLine.scene);
         if (result.scene) {
-            setScene(std::move(*result.scene), *path);
+            setScene(std::move(*result.scene), *m_commandLine.scene);
         } else {
             showErrorMessage(m_window, "Could not open scene", result.error);
+            if (m_commandLine.batch()) return false;
         }
     }
     return true;
@@ -326,6 +378,9 @@ void App::frame(double dt) {
     // --- UI -------------------------------------------------------------------------------
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    // While an image is about to be captured, act as if the mouse had left the window, so no
+    // hover highlight or tooltip ends up in the picture.
+    if (m_imageCapture || m_commandLine.batch()) ImGui::GetIO().AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     ImGui::NewFrame();
 
     const MainMenuActions actions = drawMainMenu(m_scene, m_scene.plot, shaderHotReloadAvailable());
@@ -341,13 +396,14 @@ void App::frame(double dt) {
         m_dialog.openNew(defaultElement(*kind, newElementPosition(m_scene.plot.view)));
     }
 
-    ParticleLayer layer;
+    PlotLayers layers{.streamlines = m_streamlines, .equipotentials = m_equipotentials, .speed = m_speedMap, .particles = {}};
     if (particlesVisible() && m_trailRenderer->texture() != 0) {
-        layer.texture = static_cast<ImTextureID>(m_trailRenderer->texture());
-        layer.beginBlend = premultipliedBlend;
+        layers.particles.texture = static_cast<ImTextureID>(m_trailRenderer->texture());
+        layers.particles.beginBlend = premultipliedBlend;
     }
-    m_plot = m_plotView.draw(ImVec2(workPos.x + toolWidth, workPos.y), ImVec2(workSize.x - toolWidth, bodyHeight),
-                             m_scene, m_model, m_streamlines, layer);
+    m_plotWindowPos = ImVec2(workPos.x + toolWidth, workPos.y);
+    m_plotWindowSize = ImVec2(workSize.x - toolWidth, bodyHeight);
+    m_plot = m_plotView.draw(m_plotWindowPos, m_plotWindowSize, m_scene, m_model, layers);
     m_scene.plot.view = m_plot.limits; // panning and zooming are saved with the scene, but are not "edits"
     if (m_plot.editRequest) m_dialog.openEdit(*m_plot.editRequest, m_scene.elements[*m_plot.editRequest]);
 
@@ -380,6 +436,10 @@ void App::frame(double dt) {
     glClearColor(0.05f, 0.06f, 0.09f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    // The back buffer now holds this frame; exports read it before it is swapped.
+    captureIfDue();
+    runBatchStep();
 }
 
 void App::handleMenu(const MainMenuActions& actions) {
@@ -387,6 +447,9 @@ void App::handleMenu(const MainMenuActions& actions) {
     if (actions.newScene) request(DiscardingAction::New);
     if (actions.open) request(DiscardingAction::Open);
     if (actions.save || actions.saveAs) saveScene(actions.saveAs);
+    if (actions.exportImage) exportImage();
+    if (actions.exportField) exportField();
+    if (actions.exportLines) exportLines();
     if (actions.reloadShaders) reloadShaders();
     if (actions.resetView) m_plotView.setView(PlotSettings{}.view);
     if (actions.plotChanged) {
@@ -500,9 +563,11 @@ void App::updateStreamlines() {
     if (m_plot.pixelSize.x <= 0.0f || m_plot.pixelSize.y <= 0.0f) return;
     if (!m_streamlinesDirty && m_streamlineView == view) return;
 
-    if (m_model.field.elements.empty()) {
-        m_streamlines = {};
-    } else {
+    m_referenceSpeed = typicalSpeed(m_model.field, view);
+    m_streamlines = {};
+    m_equipotentials = {};
+    m_speedMap = {};
+    if (!m_model.field.elements.empty()) {
         const double worldPerPixel = view.size().x / m_plot.pixelSize.x;
         StreamlineSettings settings;
         settings.bounds = view.expanded(k_streamlineMargin);
@@ -510,8 +575,22 @@ void App::updateStreamlines() {
         settings.singularRadius = k_singularRadiusPx * worldPerPixel;
         settings.arrowSpacing = m_scene.plot.arrowSpacingPx * uiScale() * worldPerPixel;
         m_streamlines = computeStreamlines(m_model.field, settings);
+
+        if (m_scene.plot.showEquipotentials) {
+            // Same spacing as the streamlines, so where the speed is typical the two families form
+            // roughly square cells (a flow net).
+            settings.orthogonal = true;
+            settings.arrowSpacing = 0.0;
+            m_equipotentials = computeStreamlines(m_model.field, settings);
+        }
+        if (m_scene.plot.showSpeedContours && m_referenceSpeed > 0.0) {
+            const float cell = k_speedCellPx * uiScale();
+            const int columns = static_cast<int>(std::ceil(m_plot.pixelSize.x / cell));
+            const int rows = static_cast<int>(std::ceil(m_plot.pixelSize.y / cell));
+            m_speedMap.speed = sampleSpeed(m_model.field, view, columns, rows, settings.singularRadius);
+            m_speedMap.maxSpeed = k_speedScaleFactor * m_referenceSpeed;
+        }
     }
-    m_referenceSpeed = typicalSpeed(m_model.field, view);
     m_streamlineView = view;
     m_streamlinesDirty = false;
 }
@@ -554,6 +633,89 @@ void App::renderParticles(double dt) {
     m_trailRenderer->begin(m_scene.plot.particleTrails ? k_trailFade : 1.0f);
     m_particleRenderer->draw(particleView);
     m_trailRenderer->end();
+}
+
+std::filesystem::path App::suggestedExportPath(const char* suffix) const {
+    if (m_path.empty()) return std::filesystem::path("flow").concat(suffix);
+    return m_path.parent_path() / std::filesystem::path(m_path.stem()).concat(suffix);
+}
+
+void App::exportImage() {
+    const std::optional<std::filesystem::path> path = showSavePngDialog(m_window, suggestedExportPath(".png"));
+    if (path) m_imageCapture = ImageCapture{.path = *path};
+}
+
+void App::exportField() {
+    const std::optional<std::filesystem::path> path = showSaveCsvDialog(m_window, suggestedExportPath("_field.csv"));
+    std::string error;
+    if (path && !writeFieldCsv(*path, error)) showErrorMessage(m_window, "Could not export field data", error);
+}
+
+void App::exportLines() {
+    const std::optional<std::filesystem::path> path = showSaveCsvDialog(m_window, suggestedExportPath("_lines.csv"));
+    std::string error;
+    if (path && !writeLinesCsv(*path, error)) showErrorMessage(m_window, "Could not export lines", error);
+}
+
+bool App::writePlotImage(const std::filesystem::path& path, std::string& error) const {
+    int fbWidth = 0;
+    int fbHeight = 0;
+    glfwGetFramebufferSize(m_window, &fbWidth, &fbHeight);
+    const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+    const ImVec2 origin = ImGui::GetMainViewport()->Pos;
+    const int left = std::clamp(static_cast<int>(std::lround((m_plotWindowPos.x - origin.x) * scale.x)), 0, fbWidth);
+    const int top = std::clamp(static_cast<int>(std::lround((m_plotWindowPos.y - origin.y) * scale.y)), 0, fbHeight);
+    const int width = std::min(static_cast<int>(std::lround(m_plotWindowSize.x * scale.x)), fbWidth - left);
+    const int height = std::min(static_cast<int>(std::lround(m_plotWindowSize.y * scale.y)), fbHeight - top);
+    if (width <= 0 || height <= 0) {
+        error = "The plot is not visible.";
+        return false;
+    }
+
+    // GL rows start at the bottom; PNG rows at the top.
+    const std::size_t rowBytes = 4 * static_cast<std::size_t>(width);
+    std::vector<std::uint8_t> pixels(rowBytes * static_cast<std::size_t>(height));
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(left, fbHeight - top - height, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    std::vector<std::uint8_t> flipped(pixels.size());
+    for (int row = 0; row < height; ++row) {
+        std::copy_n(pixels.begin() + static_cast<std::ptrdiff_t>(rowBytes * static_cast<std::size_t>(height - 1 - row)),
+                    rowBytes, flipped.begin() + static_cast<std::ptrdiff_t>(rowBytes * static_cast<std::size_t>(row)));
+    }
+    return writePng(path, width, height, flipped.data(), error);
+}
+
+bool App::writeFieldCsv(const std::filesystem::path& path, std::string& error) const {
+    const Rect view = m_plot.limits;
+    const int rows = std::max(2, static_cast<int>(std::lround((k_exportColumns - 1) * view.size().y / view.size().x)) + 1);
+    return writeTextFile(path, fieldCsv(m_model, view, k_exportColumns, rows), error);
+}
+
+bool App::writeLinesCsv(const std::filesystem::path& path, std::string& error) const {
+    return writeTextFile(path, linesCsv(m_streamlines, m_equipotentials), error);
+}
+
+void App::captureIfDue() {
+    if (!m_imageCapture || --m_imageCapture->framesLeft > 0) return;
+    std::string error;
+    if (!writePlotImage(m_imageCapture->path, error)) showErrorMessage(m_window, "Could not export image", error);
+    m_imageCapture.reset();
+}
+
+void App::runBatchStep() {
+    if (!m_commandLine.batch() || ++m_batchFrames < k_batchWarmupFrames || m_streamlinesDirty) return;
+    const auto run = [this](const std::optional<std::filesystem::path>& path, const char* what, auto write) {
+        std::string error;
+        if (!path || (this->*write)(*path, error)) return;
+        logMessage(std::string("Could not export ") + what + " to " + path->string() + ": " + error);
+        m_exitCode = 1;
+    };
+    run(m_commandLine.exportImage, "the image", &App::writePlotImage);
+    run(m_commandLine.exportField, "field data", &App::writeFieldCsv);
+    run(m_commandLine.exportLines, "lines", &App::writeLinesCsv);
+    m_quitConfirmed = true;
+    glfwSetWindowShouldClose(m_window, GLFW_TRUE);
 }
 
 StatusInfo App::statusInfo() const {
@@ -613,7 +775,7 @@ int runApp() {
     App app;
     if (!app.init()) return 1;
     app.run();
-    return 0;
+    return app.exitCode();
 }
 
 } // namespace pfl

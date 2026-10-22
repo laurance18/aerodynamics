@@ -3,19 +3,32 @@
 An interactive 2D potential-flow simulator in C++20, built as a senior mechanical-engineering
 semester project. It superposes elementary flows (uniform flow, source/sink, vortex, doublet,
 sector flow) and straight symmetry walls, draws evenly spaced streamlines with direction arrows,
-and animates tracer particles on the GPU.
+equipotential lines and velocity-magnitude contours, and animates tracer particles on the GPU.
 
 - Left toolbar: one icon per element type (hover for the name); a click opens a parameter dialog
   with Apply / Cancel.
 - Main plot: labelled (x, y) axes, scroll to zoom, drag to pan; streamlines are recomputed after
   every add, edit or delete. Hover an element to name it, double-click it to edit it.
 - **Elements** menu: every element with its parameters, each with Edit and Delete.
-- **File** menu: New, Open, Save, Save As (JSON scenes, see `examples/`), Clear All.
-- **View** menu: streamline density, arrows, wall images, tracer particles.
+- **File** menu: New, Open, Save, Save As (JSON scenes, see `examples/`), Clear All, and exports:
+  PNG image of the plot, CSV field data (u, v, |V|, φ, ψ, Cp on a grid), CSV streamline and
+  equipotential polylines. The exports also run from the command line.
+- **View** menu: streamline density, arrows, wall images, equipotential lines, speed contours,
+  tracer particles.
 - Status bar: velocity and Cp under the mouse, the numerical wall check, and warnings.
 
-See [docs/user_guide.md](docs/user_guide.md) for usage and [docs/report_notes.md](docs/report_notes.md)
-for the equations, conventions and design decisions.
+See [docs/user_guide.md](docs/user_guide.md) for usage, [docs/report.md](docs/report.md) for the
+project report (equations, architecture, validation, examples) and
+[docs/report_notes.md](docs/report_notes.md) for the working notes behind it.
+
+## Report figures and validation
+
+```powershell
+python tools/report_figures.py     # needs numpy and matplotlib, and a Release build
+```
+
+This renders the report figures into `docs/figures/` with the exe's command-line exports and
+compares the exported fields with the closed-form solutions (`docs/figures/validation.md`).
 
 The release build is one self-contained `PotentialFlowLab.exe`. It needs no installer, DLLs,
 Visual C++ Redistributable or extra folders.
@@ -76,8 +89,8 @@ dumpbin /headers    build\msvc\bin\Release\PotentialFlowLab.exe | findstr subsys
 ```
 
 - The dependency list should contain **only Windows system DLLs**. Currently those are:
-  `COMDLG32.dll KERNEL32.dll USER32.dll GDI32.dll SHELL32.dll IMM32.dll` (COMDLG32 provides
-  the Open / Save dialogs).
+  `COMDLG32.dll ole32.dll KERNEL32.dll USER32.dll GDI32.dll SHELL32.dll IMM32.dll` (COMDLG32
+  provides the Open / Save dialogs; ole32 starts the Windows Imaging Component that writes PNGs).
 - `OPENGL32.dll` doesn't appear because GLFW loads it at runtime.
 - Any `VCRUNTIME140*.dll`, `MSVCP140*.dll`, `api-ms-win-crt-*.dll` or `glfw3.dll` means the
   static linking broke.

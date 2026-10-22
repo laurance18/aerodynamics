@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@ namespace {
 
 constexpr ImU32 k_streamlineColor = IM_COL32(170, 200, 240, 220);
 constexpr ImU32 k_arrowColor = IM_COL32(210, 230, 255, 245);
+constexpr ImU32 k_equipotentialColor = IM_COL32(245, 175, 95, 175);
 constexpr ImU32 k_particleTint = IM_COL32(115, 115, 115, 115);
 constexpr ImU32 k_maskColor = IM_COL32(0, 0, 0, 120);
 constexpr ImU32 k_hintColor = IM_COL32(200, 200, 210, 160);
@@ -22,6 +24,8 @@ constexpr ImU32 k_highlightColor = IM_COL32(255, 255, 255, 230);
 constexpr float k_imageAlpha = 0.35f;
 constexpr float k_maskCellPx = 6.0f;
 constexpr float k_hitRadiusPx = 10.0f;
+constexpr int k_speedBands = 10;
+constexpr float k_speedAlpha = 0.6f;
 
 ImVec2 toPixels(Vec2 p) { return ImPlot::PlotToPixels(p.x, p.y); }
 
@@ -67,14 +71,82 @@ void drawMask(ImDrawList* dl, const FlowField& field, ImVec2 pos, ImVec2 size) {
     }
 }
 
-void drawStreamlines(ImDrawList* dl, const StreamlineSet& set, bool arrows) {
+// Colour of speed band `band` (0 slowest) on the Viridis scale.
+ImU32 speedBandColor(int band) {
+    ImVec4 c = ImPlot::SampleColormap((band + 0.5f) / k_speedBands, ImPlotColormap_Viridis);
+    c.w = k_speedAlpha;
+    return ImGui::ColorConvertFloat4ToU32(c);
+}
+
+// Filled |V| bands. Cells in the same band are merged into horizontal runs.
+void drawSpeedBands(ImDrawList* dl, const SpeedMap& map) {
+    const ScalarGrid& grid = map.speed;
+    if (map.maxSpeed <= 0.0 || grid.columns <= 0 || grid.rows <= 0) return;
+    const Vec2 cell{grid.bounds.size().x / grid.columns, grid.bounds.size().y / grid.rows};
+    std::vector<float> xs(static_cast<std::size_t>(grid.columns) + 1);
+    for (int i = 0; i <= grid.columns; ++i) xs[static_cast<std::size_t>(i)] = toPixels(grid.bounds.min + Vec2{cell.x * i, 0.0}).x;
+
+    const auto bandOf = [&](int i, int j) {
+        const double speed = grid.at(i, j);
+        if (std::isnan(speed)) return -1; // outside the domain: the mask covers it
+        // Clamp before converting: the speed is +infinity at singular points.
+        return static_cast<int>(std::clamp(speed / map.maxSpeed * k_speedBands, 0.0, k_speedBands - 0.5));
+    };
+    for (int j = 0; j < grid.rows; ++j) {
+        const float yBottom = toPixels(grid.bounds.min + Vec2{0.0, cell.y * j}).y;
+        const float yTop = toPixels(grid.bounds.min + Vec2{0.0, cell.y * (j + 1)}).y;
+        int runStart = 0;
+        int runBand = bandOf(0, j);
+        for (int i = 1; i <= grid.columns; ++i) {
+            const int band = i < grid.columns ? bandOf(i, j) : -2;
+            if (band == runBand) continue;
+            if (runBand >= 0) {
+                dl->AddRectFilled({xs[static_cast<std::size_t>(runStart)], yTop}, {xs[static_cast<std::size_t>(i)], yBottom},
+                                  speedBandColor(runBand));
+            }
+            runStart = i;
+            runBand = band;
+        }
+    }
+}
+
+// Colour scale for the |V| bands in the top-right corner of the plot.
+void drawSpeedScale(ImDrawList* dl, const SpeedMap& map, ImVec2 plotPos, ImVec2 plotSize) {
+    if (map.maxSpeed <= 0.0) return;
+    const float s = uiScale();
+    const float barWidth = 14.0f * s;
+    const float bandHeight = 16.0f * s;
+    const float font = ImGui::GetFontSize();
+    const std::string top = std::format("≥ {:.3g}", map.maxSpeed);
+    const float labelWidth = ImGui::CalcTextSize(top.c_str()).x;
+    const ImVec2 boxMax = plotPos + ImVec2(plotSize.x - 10.0f * s, 14.0f * s + 2.5f * font + k_speedBands * bandHeight);
+    const ImVec2 boxMin = ImVec2(boxMax.x - (barWidth + labelWidth + 22.0f * s), plotPos.y + 10.0f * s);
+    dl->AddRectFilled(boxMin, boxMax, IM_COL32(15, 17, 24, 190), 4.0f * s);
+    dl->AddText(boxMin + ImVec2(8.0f * s, 4.0f * s), k_hintColor, "|V|");
+
+    const float barX = boxMin.x + 8.0f * s;
+    const float barBottom = boxMax.y - 0.5f * font - 4.0f * s;
+    for (int band = 0; band < k_speedBands; ++band) {
+        const float y1 = barBottom - band * bandHeight;
+        ImVec4 c = ImPlot::SampleColormap((band + 0.5f) / k_speedBands, ImPlotColormap_Viridis);
+        dl->AddRectFilled({barX, y1 - bandHeight}, {barX + barWidth, y1}, ImGui::ColorConvertFloat4ToU32(c));
+    }
+    const auto label = [&](float y, const std::string& text) {
+        dl->AddText({barX + barWidth + 6.0f * s, y - 0.5f * font}, k_hintColor, text.c_str());
+    };
+    label(barBottom, "0");
+    label(barBottom - 0.5f * k_speedBands * bandHeight, std::format("{:.3g}", 0.5 * map.maxSpeed));
+    label(barBottom - k_speedBands * bandHeight, top);
+}
+
+void drawStreamlines(ImDrawList* dl, const StreamlineSet& set, bool arrows, ImU32 colour = k_streamlineColor,
+                     float width = 1.2f) {
     const float scale = uiScale();
     std::vector<ImVec2> pixels;
     for (const std::vector<Vec2>& line : set.lines) {
         pixels.resize(line.size());
         std::ranges::transform(line, pixels.begin(), toPixels);
-        dl->AddPolyline(pixels.data(), static_cast<int>(pixels.size()), k_streamlineColor, ImDrawFlags_None,
-                        1.2f * scale);
+        dl->AddPolyline(pixels.data(), static_cast<int>(pixels.size()), colour, ImDrawFlags_None, width * scale);
     }
     if (!arrows) return;
     const float size = 8.0f * scale;
@@ -161,7 +233,8 @@ float hitDistance(const SceneElement& element, ImVec2 mouse, const Rect& limits)
 } // namespace
 
 PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const FlowModel& model,
-                              const StreamlineSet& streamlines, const ParticleLayer& particles) {
+                              const PlotLayers& layers) {
+    const ParticleLayer& particles = layers.particles;
     PlotViewResult result;
     result.limits = scene.plot.view;
 
@@ -191,6 +264,8 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
         ImDrawList* dl = ImPlot::GetPlotDrawList();
         ImPlot::PushPlotClipRect();
 
+        drawSpeedBands(dl, layers.speed);
+
         const bool hasSector = std::ranges::any_of(
             model.field.elements, [](const FlowElement& e) { return std::holds_alternative<SectorFlow>(e); });
         if (hasSector) drawMask(dl, model.field, plotPos, result.pixelSize);
@@ -205,7 +280,8 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
             if (particles.beginBlend != nullptr) dl->AddCallback(ImGui::GetPlatformIO().DrawCallback_ResetRenderState, nullptr);
         }
 
-        drawStreamlines(dl, streamlines, scene.plot.showArrows);
+        drawStreamlines(dl, layers.equipotentials, false, k_equipotentialColor, 1.0f);
+        drawStreamlines(dl, layers.streamlines, scene.plot.showArrows);
 
         if (scene.plot.showImages) {
             for (const FlowElement& image : model.images) {
@@ -236,6 +312,8 @@ PlotViewResult PlotView::draw(ImVec2 pos, ImVec2 size, const Scene& scene, const
                 hit = i;
             }
         }
+
+        drawSpeedScale(dl, layers.speed, plotPos, result.pixelSize);
 
         if (scene.elements.empty()) {
             const char* hint = "Add flow elements with the toolbar on the left.";

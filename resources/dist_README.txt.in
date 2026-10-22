@@ -21,6 +21,8 @@ CONTROLS
   - Plot: scroll to zoom, drag to pan. Hover an element to see it, double-click
     it to edit it.
   - Elements menu: edit or delete any element.
-  - File menu: New, Open, Save, Save As (scene files are JSON), Clear All.
-  - View menu: streamline density, arrows, wall images, tracer particles.
+  - File menu: New, Open, Save, Save As (scene files are JSON), Clear All,
+    and exports: PNG image of the plot, CSV field data, CSV streamlines.
+  - View menu: streamline density, arrows, wall images, equipotential lines,
+    speed contours, tracer particles.
   - A scene file can also be dragged onto PotentialFlowLab.exe to open it.

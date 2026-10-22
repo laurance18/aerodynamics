@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace pfl {
 namespace {
@@ -54,6 +55,25 @@ double typicalSpeed(const FlowField& field, const Rect& region, int gridSize) {
     auto middle = speeds.begin() + static_cast<std::ptrdiff_t>(speeds.size() / 2);
     std::ranges::nth_element(speeds, middle);
     return *middle;
+}
+
+ScalarGrid sampleSpeed(const FlowField& field, const Rect& bounds, int columns, int rows, double singularRadius) {
+    ScalarGrid grid{.bounds = bounds, .columns = std::max(columns, 0), .rows = std::max(rows, 0)};
+    grid.values.reserve(static_cast<std::size_t>(grid.columns) * static_cast<std::size_t>(grid.rows));
+    const Vec2 cell{bounds.size().x / std::max(columns, 1), bounds.size().y / std::max(rows, 1)};
+    for (int j = 0; j < grid.rows; ++j) {
+        for (int i = 0; i < grid.columns; ++i) {
+            const Vec2 p = bounds.min + Vec2{cell.x * (i + 0.5), cell.y * (j + 0.5)};
+            if (!field.inDomain(p)) {
+                grid.values.push_back(std::numeric_limits<double>::quiet_NaN());
+            } else if (field.nearSingularity(p, singularRadius)) {
+                grid.values.push_back(std::numeric_limits<double>::infinity());
+            } else {
+                grid.values.push_back(length(field.velocity(p)));
+            }
+        }
+    }
+    return grid;
 }
 
 } // namespace pfl
