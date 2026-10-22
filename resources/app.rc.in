@@ -2,7 +2,8 @@
 #pragma code_page(65001)
 #include <winres.h>
 
-IDI_ICON1 ICON "@PFL_ICON_PATH@"
+// GLFW loads the window-class icon (taskbar, title bar, Alt+Tab) by this exact resource name.
+GLFW_ICON ICON "@PFL_ICON_PATH@"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION     @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
